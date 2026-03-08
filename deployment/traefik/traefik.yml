@@ -1,0 +1,62 @@
+# Traefik v3 Static Configuration
+# https://doc.traefik.io/traefik/
+
+# ─────────────────────────────────────────────
+# Entrypoints
+# ─────────────────────────────────────────────
+entryPoints:
+  web:
+    address: ":80"
+    # Redirect HTTP → HTTPS in production (uncomment below)
+    # http:
+    #   redirections:
+    #     entryPoint:
+    #       to: websecure
+    #       scheme: https
+
+  websecure:
+    address: ":443"
+    # Uncomment for Let's Encrypt in production
+    # http:
+    #   tls:
+    #     certResolver: letsencrypt
+
+# ─────────────────────────────────────────────
+# Providers
+# ─────────────────────────────────────────────
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false    # Only route services with explicit labels
+    network: mt-platform-network
+
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+# ─────────────────────────────────────────────
+# Dashboard (dev only — disable in production)
+# ─────────────────────────────────────────────
+api:
+  dashboard: true
+  insecure: true    # Access at http://localhost:8080 — disable in production
+
+# ─────────────────────────────────────────────
+# Certificate Resolvers (production)
+# ─────────────────────────────────────────────
+# Uncomment for automatic Let's Encrypt SSL
+# certificatesResolvers:
+#   letsencrypt:
+#     acme:
+#       email: admin@domain.com
+#       storage: /etc/traefik/acme/acme.json
+#       httpChallenge:
+#         entryPoint: web
+
+# ─────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────
+log:
+  level: INFO
+
+accessLog: {}
