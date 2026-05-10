@@ -1,5 +1,6 @@
 # Test profile: lightweight, no infra dependencies.
-# Integration tests that need MongoDB/Redis spin up Testcontainers explicitly.
+# Used by smoke tests and pure-unit tests that just need the Spring context
+# to load. Integration tests use the `integration` profile which keeps Mongo.
 spring:
   autoconfigure:
     exclude:

@@ -1,12 +1,13 @@
-# Phase 1.2 will wire MongoDB + Redis here.
-# Phase 1.1 keeps dev profile minimal: just a bootable app with /actuator/health.
+# Local dev profile: connects to the docker-compose stack started by
+# scripts/dev-up.sh. Mongo runs as a single-node replica set rs0 without
+# auth — fine for local dev only.
 spring:
   data:
     mongodb:
-      uri: mongodb://platform_app:dev@localhost:27017/iam_db?authSource=admin
-  redis:
-    host: localhost
-    port: 6379
+      uri: mongodb://localhost:27017/iam_db?replicaSet=rs0&directConnection=true
+    redis:
+      host: localhost
+      port: 6379
   mail:
     host: localhost
     port: 1025  # Mailhog

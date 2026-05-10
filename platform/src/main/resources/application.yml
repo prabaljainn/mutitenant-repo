@@ -8,18 +8,14 @@ spring:
     default: dev
   data:
     mongodb:
+      # Indexes are managed by Mongock changesets in Phase 1.4+, never by
+      # Spring Data's auto-index-creation (which can't track migrations).
       auto-index-creation: false
-  autoconfigure:
-    exclude:
-      # Phase 1.1: ship a bootable shell with no infra dependencies.
-      # These are re-enabled per-profile (dev/prod) once Phase 1.2 wires
-      # MongoDB + Redis via Docker Compose.
-      - org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.mongo.MongoDataAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.mongo.MongoRepositoriesAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
-      - org.springframework.boot.autoconfigure.mail.MailSenderAutoConfiguration
+      # Connection URI is profile-specific:
+      #   dev         → application-dev.yml
+      #   integration → set per-test via @DynamicPropertySource
+      #   prod        → MONGODB_URI env var (application-prod.yml)
+      #   test        → not set (Mongo autoconfig is excluded)
 
 server:
   port: 8080
