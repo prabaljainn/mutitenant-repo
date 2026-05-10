@@ -1,0 +1,22 @@
+# Profile used by Testcontainers-based integration tests.
+# The MongoDB URI is supplied by the test class's ApplicationContextInitializer
+# (each test container gets a unique random port).
+spring:
+  data:
+    mongodb:
+      auto-index-creation: false
+  autoconfigure:
+    exclude:
+      # Re-enable Mongo autoconfig (the default profile excludes it for the
+      # bootable shell). Redis and Mail stay excluded — integration tests
+      # that need them will spin up their own containers later.
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+      - org.springframework.boot.autoconfigure.mail.MailSenderAutoConfiguration
+
+logging:
+  level:
+    root: WARN
+    com.orochiverse.platform: INFO
+    org.testcontainers: WARN
+    org.mongodb.driver: WARN

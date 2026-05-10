@@ -1,58 +1,78 @@
-# Deployment Infrastructure
+# Deployment infrastructure
 
-## Services
+Local-dev infrastructure for the Orochiverse multi-tenant platform.
+The platform application itself lives under `../platform/`.
 
-This Docker Compose file provides the infrastructure services for the multitenant platform.
-The platform application itself (`platform/`) is separate.
+## Stack
 
-## Quick Start
+| Service | Image | Port | Purpose |
+|---|---|---|---|
+| MongoDB | `mongo:8.0` (LTS) | 27017 | Single-node replica set `rs0` for IAM + per-tenant data |
+| Redis | `redis:7.4-alpine` | 6379 | Refresh tokens, login rate limits, JWT denylist |
+| Mailhog | `mailhog/mailhog` | 1025 (SMTP) / 8025 (UI) | Captures invite + reset emails locally |
+| Traefik | `traefik:v3.1` | 80 / 443 / 8090 | Optional — start with `--profile proxy` |
+
+Versions are pinned in `.env` (`MONGO_VERSION`, `REDIS_VERSION`).
+
+## Quick start
+
+Use the runner scripts at `../scripts/` — they wrap docker-compose with
+healthcheck-aware waits and sane defaults:
 
 ```bash
-# Start all services
-docker compose up -d
-
-# Check status
-docker compose ps
-
-# View logs
-docker compose logs -f mongodb
-
-# Stop all services
-docker compose down
-
-# Stop and remove volumes (CAUTION: deletes data)
-docker compose down -v
+../scripts/dev-up.sh                  # start essentials, wait for rs0 PRIMARY
+../scripts/dev-up.sh --profile proxy  # also start Traefik
+../scripts/dev-status.sh              # show health + connectivity
+../scripts/dev-logs.sh [service]      # tail logs
+../scripts/dev-down.sh                # stop (volumes preserved)
+../scripts/dev-reset.sh               # stop AND wipe volumes (asks)
 ```
 
-## Services Overview
-
-| Service | Port | Purpose |
-|---------|------|---------|
-| MongoDB | 27017 | Primary database |
-| Redis | 6379 | Cache, sessions, token store |
-| Mailhog | 1025 (SMTP), 8025 (Web UI) | Dev email testing |
-
-## Environment Variables
-
-Copy `.env.example` to `.env` and configure:
+Or raw `docker compose`:
 
 ```bash
 cp .env.example .env
+docker compose --env-file .env up -d
 ```
 
-## Data Persistence
+## Why Mongo 8.0 LTS?
 
-All data is persisted via Docker volumes:
-- `mongodb_data` — MongoDB data files
-- `redis_data` — Redis persistence
+- 32%+ faster reads / writes vs Mongo 7
+- Dramatically improved time-series engine (relevant for drone telemetry in M2+)
+- LTS support window: ~Oct 2027
+- Override to a rapid-release line via `MONGO_VERSION=8.3` in `.env` if you
+  want bleeding-edge — at the cost of a 6-month support window.
 
-## MongoDB Initialization
+## Replica set in dev
 
-On first start, MongoDB runs scripts from `mongodb/init-scripts/`:
-- Creates the application database
-- Sets up the application user with appropriate permissions
-- Creates initial indexes
+Mongo runs in single-node `rs0` mode because Spring Data Mongo's
+multi-document transactions (used during tenant onboarding in Phase 1.7+)
+require a replica set. The `mongo-init` one-shot service initiates `rs0`
+on first boot — idempotent on subsequent runs.
 
-## Mailhog Web UI
+## Auth model
 
-After starting services, view captured emails at: http://localhost:8025
+Dev mode runs Mongo **without authentication** for simplicity. Production
+deployments should:
+
+1. Enable `--auth` and a proper keyfile or x.509 for inter-replica auth
+2. Inject `MONGODB_URI` with credentials via env var (`SPRING_PROFILES_ACTIVE=prod`)
+3. Not use this docker-compose at all — use Mongo Atlas or a managed cluster
+
+See `../docs/superpowers/specs/2026-05-11-platform-shell-m1-design.md` §8
+for production security policy.
+
+## Indexes / schema
+
+Owned by the Spring Boot app via Mongock changesets (Phase 1.4+), **not**
+by SQL/JS init scripts here. See `mongodb/init-scripts/README.md`.
+
+## Data persistence
+
+| Volume | Contents |
+|---|---|
+| `mongodb_data` | `iam_db` + per-tenant DBs |
+| `mongodb_config` | replica set config |
+| `redis_data` | RDB snapshots + AOF |
+
+`dev-reset.sh` is the only script that nukes these.

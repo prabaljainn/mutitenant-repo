@@ -25,7 +25,7 @@ This spec covers **Milestone 1**: the foundation — IAM, multi-tenant data plum
 | Build vs buy IAM | **Build from scratch** | Operator-tier model fits naturally; no third-party complexity |
 | Backend stack | **Spring Boot 3.5+ on Java 25 LTS** | Team fluency; existing GCS migrates Java→Java; virtual threads close the perf gap |
 | Frontend stack | **Angular** (modernize incrementally) | Team fluency; matches existing GCS UI |
-| Database | **MongoDB 7** with shared `iam_db` + per-tenant `tenant_<id>_db` | Single engine; physical tenant isolation; Mongo TimeSeries for telemetry later |
+| Database | **MongoDB 8.0 LTS** (single-node replica set in dev) with shared `iam_db` + per-tenant `tenant_<id>_db` | 32%+ throughput vs Mongo 7; better TimeSeries engine; LTS supported until ~Oct 2027. Replica-set mode required for multi-document transactions used by tenant onboarding |
 | Cache / sessions | **Redis 7** | Refresh tokens, denylist, rate limits |
 | Token model | **JWT (RS256) + JWKS endpoint** | Stateless; GCS and future products verify locally |
 | Tenant user multi-tenancy | **Strictly siloed** — only operator users are cross-tenant | Simpler model; matches B2B drone-ops reality |
@@ -58,12 +58,13 @@ This spec covers **Milestone 1**: the foundation — IAM, multi-tenant data plum
 └────────┬───────────────────┬──────────────────┬─────────┘
          │                   │                  │
          ▼                   ▼                  ▼
-   ┌──────────┐         ┌─────────┐        ┌─────────┐
-   │ MongoDB  │         │  Redis  │        │  SMTP   │
-   │  iam_db  │         │ tokens  │        │(Mailhog │
-   │ tenant_*_│         │ denylist│        │  / SES) │
-   │   db     │         │ rate    │        │         │
-   └──────────┘         └─────────┘        └─────────┘
+   ┌──────────────┐     ┌─────────┐        ┌─────────┐
+   │ MongoDB 8.0  │     │  Redis  │        │  SMTP   │
+   │   (rs0)      │     │ tokens  │        │(Mailhog │
+   │   iam_db     │     │ denylist│        │  / SES) │
+   │ tenant_<id>_ │     │ rate    │        │         │
+   │     db       │     │ limits  │        │         │
+   └──────────────┘     └─────────┘        └─────────┘
 ```
 
 ### What this milestone owns

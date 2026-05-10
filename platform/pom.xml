@@ -1,8 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
-                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -28,7 +25,8 @@
         <springdoc.version>2.6.0</springdoc.version>
         <mongock.version>5.5.1</mongock.version>
         <archunit.version>1.4.1</archunit.version>
-        <testcontainers.version>1.20.4</testcontainers.version>
+        <testcontainers.version>1.21.3</testcontainers.version>
+        <spotless.version>2.44.5</spotless.version>
     </properties>
 
     <dependencies>
@@ -149,6 +147,69 @@
 
     <build>
         <plugins>
+            <!--
+              Spotless: light-touch auto-format on every build so import order
+              and whitespace never show up in PRs. Bound to `process-sources`
+              (runs before compile).
+
+              We deliberately do NOT run a full reformatter (google-java-format,
+              palantir-java-format) because both poke into javac internals
+              (`com.sun.tools.javac.util.Log$DeferredDiagnosticHandler`) that
+              changed in Java 25; neither has a Java-25-compatible release as
+              of May 2026. Eclipse JDT works but reformats too aggressively
+              for our taste at this stage.
+
+              The rules below handle ~95% of "noisy formatting" PRs (imports,
+              trailing whitespace, missing newlines). Code style + indentation
+              are left to the developer's IDE — make sure format-on-save is
+              enabled in IntelliJ / VS Code.
+
+              When google/palantir ship Java-25-compatible releases, plug a
+              real formatter back in via `<palantirJavaFormat>` or
+              `<googleJavaFormat>`.
+
+              Manual usage:
+                ./mvnw spotless:apply   # apply rules now
+                ./mvnw spotless:check   # verify (no writes); fails if dirty
+            -->
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>${spotless.version}</version>
+                <configuration>
+                    <java>
+                        <includes>
+                            <include>src/main/java/**/*.java</include>
+                            <include>src/test/java/**/*.java</include>
+                        </includes>
+                        <removeUnusedImports/>
+                        <importOrder>
+                            <order>java,javax,jakarta,org,com,com.orochiverse,</order>
+                        </importOrder>
+                        <trimTrailingWhitespace/>
+                        <endWithNewline/>
+                    </java>
+                    <pom>
+                        <includes>
+                            <include>pom.xml</include>
+                        </includes>
+                        <sortPom>
+                            <expandEmptyElements>false</expandEmptyElements>
+                            <nrOfIndentSpace>4</nrOfIndentSpace>
+                        </sortPom>
+                    </pom>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>spotless-apply</id>
+                        <goals>
+                            <goal>apply</goal>
+                        </goals>
+                        <phase>process-sources</phase>
+                    </execution>
+                </executions>
+            </plugin>
+
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
@@ -188,6 +249,16 @@
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <configuration>
                     <argLine>--enable-preview</argLine>
+                    <!--
+                      Testcontainers needs to know where the Docker socket is.
+                      Docker Desktop on macOS uses ~/.docker/run/docker.sock,
+                      which Maven Surefire/Failsafe doesn't auto-detect from
+                      the environment. We point at the standard path; CI can
+                      override via the DOCKER_HOST env var if needed.
+                    -->
+                    <environmentVariables>
+                        <DOCKER_HOST>unix://${user.home}/.docker/run/docker.sock</DOCKER_HOST>
+                    </environmentVariables>
                 </configuration>
                 <executions>
                     <execution>
