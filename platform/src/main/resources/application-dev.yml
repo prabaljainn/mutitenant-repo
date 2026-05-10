@@ -1,0 +1,17 @@
+# Phase 1.2 will wire MongoDB + Redis here.
+# Phase 1.1 keeps dev profile minimal: just a bootable app with /actuator/health.
+spring:
+  data:
+    mongodb:
+      uri: mongodb://platform_app:dev@localhost:27017/iam_db?authSource=admin
+  redis:
+    host: localhost
+    port: 6379
+  mail:
+    host: localhost
+    port: 1025  # Mailhog
+
+logging:
+  level:
+    org.springframework.web: INFO
+    org.mongodb.driver: WARN

@@ -1,0 +1,31 @@
+# Production profile reads everything from environment variables.
+# No secrets in the repo.
+spring:
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:?MONGODB_URI must be set in production}
+  redis:
+    url: ${REDIS_URL:?REDIS_URL must be set in production}
+  mail:
+    host: ${SMTP_HOST:?SMTP_HOST must be set in production}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:?SMTP_USERNAME must be set in production}
+    password: ${SMTP_PASSWORD:?SMTP_PASSWORD must be set in production}
+    properties:
+      mail:
+        smtp:
+          starttls:
+            enable: true
+
+server:
+  forward-headers-strategy: framework
+
+management:
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    root: INFO
+    com.orochiverse.platform: INFO

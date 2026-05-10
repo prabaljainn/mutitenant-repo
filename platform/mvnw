@@ -1,0 +1,34 @@
+#!/bin/sh
+# ----------------------------------------------------------------------------
+# Maven Wrapper script
+# Bootstraps and invokes Maven via the wrapper jar in .mvn/wrapper/
+# ----------------------------------------------------------------------------
+set -e
+
+BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+WRAPPER_JAR="$BASE_DIR/.mvn/wrapper/maven-wrapper.jar"
+WRAPPER_PROPERTIES="$BASE_DIR/.mvn/wrapper/maven-wrapper.properties"
+
+if [ ! -r "$WRAPPER_JAR" ]; then
+    echo "Error: Maven Wrapper jar not found at $WRAPPER_JAR" >&2
+    exit 1
+fi
+
+if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    JAVA_EXEC="$JAVA_HOME/bin/java"
+elif command -v java >/dev/null 2>&1; then
+    JAVA_EXEC="$(command -v java)"
+else
+    echo "Error: JAVA_HOME is not set and 'java' is not on PATH" >&2
+    echo "Install Java 25 (e.g., via SDKMAN: sdk install java 25-tem)" >&2
+    exit 1
+fi
+
+MAVEN_OPTS="${MAVEN_OPTS:-} -Dmaven.multiModuleProjectDirectory=$BASE_DIR"
+
+exec "$JAVA_EXEC" $MAVEN_OPTS \
+    -classpath "$WRAPPER_JAR" \
+    "-Dmaven.home=${M2_HOME:-$BASE_DIR}" \
+    "-Dlibrary.jansi.path=$BASE_DIR/.mvn/wrapper/jansi-native" \
+    "-Dmaven.multiModuleProjectDirectory=$BASE_DIR" \
+    org.apache.maven.wrapper.MavenWrapperMain "$@"

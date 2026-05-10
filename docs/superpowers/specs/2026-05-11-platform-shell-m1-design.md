@@ -8,7 +8,7 @@
 
 ## 1. Context
 
-SoftBank operates a multi-tenant ground-control / drone-management platform serving five customer organizations. The existing GCS code is a single-tenant Spring Boot application of mixed quality. This project replaces that with a fresh, multi-tenant platform shell into which the GCS will be migrated incrementally (strangler-fig).
+Orochiverse operates a multi-tenant ground-control / drone-management platform serving five customer organizations. The existing GCS code is a single-tenant Spring Boot application of mixed quality. This project replaces that with a fresh, multi-tenant platform shell into which the GCS will be migrated incrementally (strangler-fig).
 
 This spec covers **Milestone 1**: the foundation — IAM, multi-tenant data plumbing, JWT auth, and the admin APIs needed to onboard tenants and users. It does **not** cover GCS feature migration (M2+).
 
@@ -18,7 +18,7 @@ This spec covers **Milestone 1**: the foundation — IAM, multi-tenant data plum
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Operator model | **Single operator (SoftBank only)**, no `OperatorOrg` entity — implicit | No reseller plans; avoids unnecessary entity |
+| Operator model | **Single operator (Orochiverse only)**, no `OperatorOrg` entity — implicit | No reseller plans; avoids unnecessary entity |
 | Operator scope model | **Two operator tiers + uniform role across assigned tenants** | `OPERATOR_ADMIN` / `OPERATOR_SUPPORT`; assignment is a flat tenant list |
 | Repo & service shape | **Modular monolith**, single deployable Spring Boot app | Faster iteration; modules can be extracted later behind JWT contract |
 | Frontend | **One admin SPA, role-aware views** | Operator and tenant-admin share codebase; views switch by role |
@@ -149,7 +149,7 @@ audit_log:              { timestamp: -1 } TTL=31536000s
 
 ```json
 {
-  "iss": "https://iam.softbank.com",
+  "iss": "https://iam.orochiverse.com",
   "sub": "<userId>",
   "email": "user@example.com",
   "kind": "OPERATOR" | "TENANT_USER",
