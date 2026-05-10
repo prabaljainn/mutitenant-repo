@@ -42,23 +42,42 @@ require_cmd() {
 }
 
 resolve_java_home() {
+    # 1. Honour an existing JAVA_HOME if it's valid.
     if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]]; then
         return
     fi
-    # Standard Homebrew location for OpenJDK on Apple Silicon Macs.
-    if [[ -x "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home/bin/java" ]]; then
-        export JAVA_HOME=/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home
-        return
-    fi
+
+    # 2. Common manual install locations (user-installed JDK tarballs).
+    #    Pick the highest-versioned 25.x match.
+    local candidate
+    for candidate in \
+        "$HOME/bin"/jdk-25*/Contents/Home \
+        "$HOME/bin"/jdk-25*/ \
+        "$HOME"/.jdks/jdk-25*/Contents/Home \
+        "$HOME"/.sdkman/candidates/java/25*/ \
+        "/Library/Java/JavaVirtualMachines"/jdk-25*/Contents/Home \
+        "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home" \
+        "/opt/homebrew/opt/openjdk@25/libexec/openjdk.jdk/Contents/Home"
+    do
+        if [[ -x "$candidate/bin/java" ]]; then
+            export JAVA_HOME="${candidate%/}"
+            return
+        fi
+    done
+
+    # 3. macOS java_home utility — last resort.
     if command -v /usr/libexec/java_home >/dev/null 2>&1; then
         if JH=$(/usr/libexec/java_home -v 25 2>/dev/null); then
             export JAVA_HOME="$JH"
             return
         fi
     fi
-    err "Could not locate a Java 25 runtime. Install via:"
-    err "    sdk install java 25-tem        # SDKMAN"
-    err "    brew install openjdk@25         # Homebrew"
+
+    err "Could not locate a Java 25 runtime. Install via one of:"
+    err "    sdk install java 25-tem                  # SDKMAN"
+    err "    brew install openjdk@25                  # Homebrew"
+    err "    download JDK 25 to ~/bin/jdk-25.x/       # manual"
+    err "Or export JAVA_HOME yourself before running this script."
     exit 1
 }
 

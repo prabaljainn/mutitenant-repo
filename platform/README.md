@@ -49,6 +49,10 @@ Or via Homebrew:
 brew install openjdk@25
 ```
 
+Or download a JDK 25 tarball and extract to `~/bin/jdk-25.x/`. The runner
+scripts auto-resolve `JAVA_HOME` from any of these locations — no need to
+export it yourself, but if you do, it's honoured.
+
 Then:
 
 ```bash
