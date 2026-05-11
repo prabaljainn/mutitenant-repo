@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -19,25 +18,29 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import com.orochiverse.platform.common.security.jwt.AccessTokenIssuer;
 import com.orochiverse.platform.common.security.passwords.PasswordHashing;
-import com.orochiverse.platform.common.security.principals.OperatorRole;
-import com.orochiverse.platform.iam.admin.AdminItSupport;
 import com.orochiverse.platform.iam.users.UserRepository;
 import com.orochiverse.platform.iam.users.UserStatus;
+import com.orochiverse.platform.testsupport.IT;
+import com.orochiverse.platform.testsupport.IamFixtures;
+import com.orochiverse.platform.testsupport.JwtTestSupport;
+import com.orochiverse.platform.testsupport.MongoTestSupport;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("integration")
-@EnabledIf("com.orochiverse.platform.iam.admin.AdminItSupport#mongoIsReachable")
+@EnabledIf("com.orochiverse.platform.testsupport.MongoTestSupport#mongoIsReachable")
 class OperatorsAdminControllerIT {
 
     @DynamicPropertySource
     static void mongoProps(DynamicPropertyRegistry r) {
-        r.add("spring.data.mongodb.uri", () -> AdminItSupport.CONNECTION_URI);
+        MongoTestSupport.mongoProps(r);
     }
 
     @LocalServerPort int port;
     @Autowired UserRepository users;
     @Autowired PasswordHashing passwords;
+    @Autowired AccessTokenIssuer issuer;
 
     private String suffix;
     private String adminId;
@@ -46,10 +49,10 @@ class OperatorsAdminControllerIT {
 
     @BeforeEach
     void setUp() {
-        suffix = AdminItSupport.randomSuffix();
-        adminId = AdminItSupport.seedOperator(users, passwords, "admin-" + suffix,
-                "admin-" + suffix + "@orochi.example", "Sup3rSecret!", OperatorRole.OPERATOR_ADMIN);
-        adminToken = login("admin-" + suffix + "@orochi.example", "Sup3rSecret!");
+        suffix = IamFixtures.randomSuffix();
+        var admin = IamFixtures.operator(suffix).save(users, passwords);
+        adminId = admin.id();
+        adminToken = JwtTestSupport.token(issuer, admin);
     }
 
     @AfterEach
@@ -65,7 +68,7 @@ class OperatorsAdminControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void admin_can_invite_and_invitee_is_INVITED_with_no_password() {
-        var resp = AdminItSupport.exchange(url("/admin/api/operators"), HttpMethod.POST, adminToken,
+        var resp = IT.exchange(port, "/admin/api/operators", HttpMethod.POST, adminToken,
                 Map.of("email", "newop-" + suffix + "@orochi.example",
                         "firstName", "New", "lastName", "Op", "role", "OPERATOR_SUPPORT"),
                 Map.class);
@@ -84,12 +87,12 @@ class OperatorsAdminControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void duplicate_email_returns_409() {
-        AdminItSupport.exchange(url("/admin/api/operators"), HttpMethod.POST, adminToken,
+        IT.exchange(port, "/admin/api/operators", HttpMethod.POST, adminToken,
                 Map.of("email", "dup-" + suffix + "@orochi.example",
                         "firstName", "A", "lastName", "B", "role", "OPERATOR_SUPPORT"),
                 Map.class);
 
-        var dup = AdminItSupport.exchange(url("/admin/api/operators"), HttpMethod.POST, adminToken,
+        var dup = IT.exchange(port, "/admin/api/operators", HttpMethod.POST, adminToken,
                 Map.of("email", "dup-" + suffix + "@orochi.example",
                         "firstName", "C", "lastName", "D", "role", "OPERATOR_ADMIN"),
                 Map.class);
@@ -107,7 +110,7 @@ class OperatorsAdminControllerIT {
 
     @Test
     void list_active_operators_includes_seeded_admin() {
-        var resp = AdminItSupport.exchange(url("/admin/api/operators?status=ACTIVE"),
+        var resp = IT.exchange(port, "/admin/api/operators?status=ACTIVE",
                 HttpMethod.GET, adminToken, null, List.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -117,7 +120,7 @@ class OperatorsAdminControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void get_unknown_operator_returns_404() {
-        var resp = AdminItSupport.exchange(url("/admin/api/operators/operator-deadbeef"),
+        var resp = IT.exchange(port, "/admin/api/operators/operator-deadbeef",
                 HttpMethod.GET, adminToken, null, Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
@@ -130,19 +133,19 @@ class OperatorsAdminControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void admin_can_change_role_and_suspend() {
-        var invite = AdminItSupport.exchange(url("/admin/api/operators"), HttpMethod.POST, adminToken,
+        var invite = IT.exchange(port, "/admin/api/operators", HttpMethod.POST, adminToken,
                 Map.of("email", "r-" + suffix + "@orochi.example",
                         "firstName", "R", "lastName", "Op", "role", "OPERATOR_SUPPORT"),
                 Map.class);
         createdInviteId = (String) invite.getBody().get("id");
 
-        var roleChange = AdminItSupport.exchange(url("/admin/api/operators/" + createdInviteId),
+        var roleChange = IT.exchange(port, "/admin/api/operators/" + createdInviteId,
                 HttpMethod.PUT, adminToken,
                 Map.of("role", "OPERATOR_ADMIN"), Map.class);
         assertThat(roleChange.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(roleChange.getBody()).containsEntry("role", "OPERATOR_ADMIN");
 
-        var suspend = AdminItSupport.exchange(url("/admin/api/operators/" + createdInviteId),
+        var suspend = IT.exchange(port, "/admin/api/operators/" + createdInviteId,
                 HttpMethod.PUT, adminToken,
                 Map.of("status", "SUSPENDED"), Map.class);
         assertThat(suspend.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -152,13 +155,13 @@ class OperatorsAdminControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void update_cannot_set_status_to_DELETED_directly() {
-        var invite = AdminItSupport.exchange(url("/admin/api/operators"), HttpMethod.POST, adminToken,
+        var invite = IT.exchange(port, "/admin/api/operators", HttpMethod.POST, adminToken,
                 Map.of("email", "d-" + suffix + "@orochi.example",
                         "firstName", "D", "lastName", "Op", "role", "OPERATOR_SUPPORT"),
                 Map.class);
         createdInviteId = (String) invite.getBody().get("id");
 
-        var resp = AdminItSupport.exchange(url("/admin/api/operators/" + createdInviteId),
+        var resp = IT.exchange(port, "/admin/api/operators/" + createdInviteId,
                 HttpMethod.PUT, adminToken,
                 Map.of("status", "DELETED"), Map.class);
 
@@ -172,7 +175,7 @@ class OperatorsAdminControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void admin_cannot_delete_themselves() {
-        var resp = AdminItSupport.exchange(url("/admin/api/operators/" + adminId),
+        var resp = IT.exchange(port, "/admin/api/operators/" + adminId,
                 HttpMethod.DELETE, adminToken, null, Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
@@ -180,7 +183,7 @@ class OperatorsAdminControllerIT {
 
     @Test
     void admin_can_soft_delete_another_operator() {
-        var invite = AdminItSupport.exchange(url("/admin/api/operators"), HttpMethod.POST, adminToken,
+        var invite = IT.exchange(port, "/admin/api/operators", HttpMethod.POST, adminToken,
                 Map.of("email", "del-" + suffix + "@orochi.example",
                         "firstName", "Del", "lastName", "Op", "role", "OPERATOR_SUPPORT"),
                 Map.class);
@@ -188,7 +191,7 @@ class OperatorsAdminControllerIT {
         String id = (String) ((Map<String, Object>) invite.getBody()).get("id");
         createdInviteId = id;
 
-        var resp = AdminItSupport.exchange(url("/admin/api/operators/" + id),
+        var resp = IT.exchange(port, "/admin/api/operators/" + id,
                 HttpMethod.DELETE, adminToken, null, Void.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
 
@@ -196,19 +199,4 @@ class OperatorsAdminControllerIT {
         assertThat(after.status()).isEqualTo(UserStatus.DELETED);
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Helpers
-    // ─────────────────────────────────────────────────────────────────────
-
-    private String url(String path) {
-        return "http://localhost:" + port + path;
-    }
-
-    @SuppressWarnings("unchecked")
-    private String login(String email, String password) {
-        var resp = new TestRestTemplate().postForEntity(
-                url("/api/auth/login"), Map.of("email", email, "password", password), Map.class);
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-        return (String) resp.getBody().get("accessToken");
-    }
 }

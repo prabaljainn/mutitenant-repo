@@ -2,7 +2,7 @@
 
 Every test class in `platform/src/test/java`, what it verifies, and how to run it.
 
-**Total: 125 tests** — 93 unit (Surefire) + 32 integration (Failsafe).
+**Total: 247 tests** — 159 unit (Surefire) + 88 integration (Failsafe).
 
 ---
 
@@ -11,12 +11,25 @@ Every test class in `platform/src/test/java`, what it verifies, and how to run i
 | Command | Runs |
 |---|---|
 | `./mvnw test` | All Surefire (`*Test.java`) — no infra needed. |
-| `./mvnw verify` | Surefire + Failsafe (`*IT.java`). Failsafe needs the Docker dev stack up (`./scripts/dev-up.sh`). |
+| `./mvnw verify` | Surefire + Failsafe (`*IT.java`). Failsafe needs the Docker dev stack up (`./scripts/dev-up.sh` for Mongo, `./scripts/dev-mailhog.sh` for SMTP). |
 | `./mvnw test -DskipITs` | Skip integration tests. |
 | `./mvnw test -Dtest=ClassName` | Run one Surefire class. |
 | `./mvnw verify -Dit.test=ClassName` | Run one Failsafe class. |
 
-**Mongo-backed ITs (`MongoConnectivityIT`, `MultiTenantMongoIT`, `IamRepositoriesIT`) skip themselves** if the dev Mongo isn't reachable — they use `@EnabledIf("…mongoIsReachable")`. The other ITs (`JwksEndpointIT`, `AuthFlowIT`) run under the `test` profile and don't need Mongo.
+**Mongo-backed ITs skip themselves** if the dev Mongo isn't reachable — they're gated on `@EnabledIf("com.orochiverse.platform.testsupport.MongoTestSupport#mongoIsReachable")`. `EmailFlowsIT` is gated on MailHog reachability the same way. The other ITs (`JwksEndpointIT`, `AuthFlowIT`) run under the `test` profile and don't need Mongo.
+
+---
+
+## Test fixtures (`testsupport/`)
+
+Phase 1.11 collected the IT boilerplate into one package:
+
+- **`MongoTestSupport`** — `mongoIsReachable()` (the `@EnabledIf` probe), `CONNECTION_URI`, and `mongoProps(DynamicPropertyRegistry)`. Every Mongo-backed IT uses these instead of inlining its own copy.
+- **`IT`** — static `url(port, path)` / `bearer(token)` / `exchange(port, path, method, token, body, type)` helpers. Replaces the per-IT `private String url(…)` and ad-hoc `TestRestTemplate` calls.
+- **`IamFixtures`** — fluent builders: `IamFixtures.operator(suffix).role(OPERATOR_ADMIN).save(users, passwords)` and `IamFixtures.tenantUser(suffix, tenantId).role(TENANT_OWNER).save(users, passwords)`. Returns the persisted `User` so the test can pass it straight into `JwtTestSupport.token`.
+- **`JwtTestSupport`** — `JwtTestSupport.token(issuer, user)` mints a signed access token whose claims match the user, bypassing the `/login` HTTP round-trip. Drops per-test setup time on multi-user ITs (e.g. `TenantSelfApiIT` seeds owner+admin+editor+cross-tenant-owner) by skipping four BCrypt verifications. `JwtTestSupport.tokenWithTokenVersion(issuer, user, tv)` mints a token with a stale `tv` for revocation tests.
+
+When to use the bypass: any IT that exercises an authenticated endpoint and isn't itself testing `/login`. Tests of `/login`, the rate limiter, and the password-reset/accept-invite flows still hit `/login` for real, because the credential round-trip is the thing under test.
 
 ---
 

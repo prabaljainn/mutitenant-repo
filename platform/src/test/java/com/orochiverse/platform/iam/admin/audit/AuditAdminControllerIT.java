@@ -22,25 +22,29 @@ import org.springframework.test.context.DynamicPropertySource;
 import com.orochiverse.platform.common.audit.AuditAction;
 import com.orochiverse.platform.common.audit.AuditEntry;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
+import com.orochiverse.platform.common.security.jwt.AccessTokenIssuer;
 import com.orochiverse.platform.common.security.passwords.PasswordHashing;
-import com.orochiverse.platform.common.security.principals.OperatorRole;
-import com.orochiverse.platform.iam.admin.AdminItSupport;
 import com.orochiverse.platform.iam.users.UserRepository;
+import com.orochiverse.platform.testsupport.IT;
+import com.orochiverse.platform.testsupport.IamFixtures;
+import com.orochiverse.platform.testsupport.JwtTestSupport;
+import com.orochiverse.platform.testsupport.MongoTestSupport;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("integration")
-@EnabledIf("com.orochiverse.platform.iam.admin.AdminItSupport#mongoIsReachable")
+@EnabledIf("com.orochiverse.platform.testsupport.MongoTestSupport#mongoIsReachable")
 class AuditAdminControllerIT {
 
     @DynamicPropertySource
     static void mongoProps(DynamicPropertyRegistry r) {
-        r.add("spring.data.mongodb.uri", () -> AdminItSupport.CONNECTION_URI);
+        MongoTestSupport.mongoProps(r);
     }
 
     @LocalServerPort int port;
     @Autowired UserRepository users;
     @Autowired PasswordHashing passwords;
     @Autowired AuditEntryRepository audit;
+    @Autowired AccessTokenIssuer issuer;
 
     private String suffix;
     private String adminId;
@@ -48,10 +52,10 @@ class AuditAdminControllerIT {
 
     @BeforeEach
     void setUp() {
-        suffix = AdminItSupport.randomSuffix();
-        adminId = AdminItSupport.seedOperator(users, passwords, "admin-" + suffix,
-                "admin-" + suffix + "@orochi.example", "S3cret!", OperatorRole.OPERATOR_ADMIN);
-        adminToken = login("admin-" + suffix + "@orochi.example", "S3cret!");
+        suffix = IamFixtures.randomSuffix();
+        var admin = IamFixtures.operator(suffix).save(users, passwords);
+        adminId = admin.id();
+        adminToken = JwtTestSupport.token(issuer, admin);
 
         // Seed a small set of audit rows we can query for.
         audit.save(AuditEntry.of(AuditAction.LOGIN_SUCCESS, adminId));
@@ -69,7 +73,7 @@ class AuditAdminControllerIT {
 
     @Test
     void unfiltered_listing_is_paginated() {
-        var resp = AdminItSupport.exchange(url("/admin/api/audit?size=10"),
+        var resp = IT.exchange(port, "/admin/api/audit?size=10",
                 HttpMethod.GET, adminToken, null, List.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -81,7 +85,7 @@ class AuditAdminControllerIT {
     void filter_by_actor_returns_only_my_actions_and_includes_seeded_login() {
         // Login itself produces a LOGIN_SUCCESS entry; the @BeforeEach seeded
         // two more. So expect at least 3 entries for this actor.
-        var resp = AdminItSupport.exchange(url("/admin/api/audit?actorUserId=" + adminId),
+        var resp = IT.exchange(port, "/admin/api/audit?actorUserId=" + adminId,
                 HttpMethod.GET, adminToken, null, List.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -96,19 +100,7 @@ class AuditAdminControllerIT {
 
     @Test
     void requires_authentication() {
-        var resp = new TestRestTemplate().getForEntity(url("/admin/api/audit"), Map.class);
+        var resp = new TestRestTemplate().getForEntity(IT.url(port, "/admin/api/audit"), Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
-    }
-
-    private String url(String path) {
-        return "http://localhost:" + port + path;
-    }
-
-    @SuppressWarnings("unchecked")
-    private String login(String email, String password) {
-        var resp = new TestRestTemplate().postForEntity(
-                url("/api/auth/login"), Map.of("email", email, "password", password), Map.class);
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-        return (String) resp.getBody().get("accessToken");
     }
 }

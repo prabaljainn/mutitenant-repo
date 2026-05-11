@@ -2,9 +2,6 @@ package com.orochiverse.platform.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.net.ConnectException;
-import java.util.concurrent.TimeUnit;
-
 import org.bson.Document;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -16,10 +13,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
-import com.mongodb.MongoClientSettings;
-import com.mongodb.MongoSocketOpenException;
-import com.mongodb.MongoTimeoutException;
-import com.mongodb.client.MongoClients;
 
 /**
  * Phase 1.2 integration test — proves the Spring Data Mongo wiring works
@@ -30,43 +23,20 @@ import com.mongodb.client.MongoClients;
  * Engine API (1.53). Until that's fixed upstream, integration tests run
  * against the local dev stack started by {@code ./scripts/dev-up.sh}.
  *
- * The {@link #mongoIsReachable} guard means CI and dev machines that
- * don't have the stack up will SKIP the test (not fail it), keeping
- * {@code mvn verify} green while still exercising the contract whenever
- * Mongo is available.
+ * The {@link com.orochiverse.platform.testsupport.MongoTestSupport#mongoIsReachable
+ * mongoIsReachable} guard means CI and dev machines that don't have the
+ * stack up will SKIP the test (not fail it), keeping {@code mvn verify}
+ * green while still exercising the contract whenever Mongo is available.
  */
 @SpringBootTest
 @ActiveProfiles("integration")
-@EnabledIf("com.orochiverse.platform.integration.MongoConnectivityIT#mongoIsReachable")
+@EnabledIf("com.orochiverse.platform.testsupport.MongoTestSupport#mongoIsReachable")
 class MongoConnectivityIT {
 
-    private static final String HOST = "localhost";
-    private static final int PORT = 27017;
+    // Distinct DB name keeps this smoke test's documents out of iam_db.
     private static final String DB_NAME = "iam_db_it_smoke";
     private static final String CONNECTION_URI =
-            "mongodb://" + HOST + ":" + PORT + "/" + DB_NAME + "?replicaSet=rs0&directConnection=true";
-
-    /** JUnit 5 condition: skip if no replica-set primary is reachable. */
-    static boolean mongoIsReachable() {
-        var settings = MongoClientSettings.builder()
-                .applyConnectionString(new com.mongodb.ConnectionString(CONNECTION_URI))
-                .applyToClusterSettings(c -> c.serverSelectionTimeout(2, TimeUnit.SECONDS))
-                .build();
-        try (var client = MongoClients.create(settings)) {
-            client.getDatabase("admin").runCommand(new Document("ping", 1));
-            return true;
-        } catch (MongoTimeoutException | MongoSocketOpenException e) {
-            System.err.println("[MongoConnectivityIT] Skipping — no Mongo at " + HOST + ":" + PORT
-                    + ". Run ./scripts/dev-up.sh to enable this test.");
-            return false;
-        } catch (Exception e) {
-            if (e.getCause() instanceof ConnectException) {
-                System.err.println("[MongoConnectivityIT] Skipping — Mongo unreachable: " + e.getMessage());
-                return false;
-            }
-            throw new RuntimeException("Unexpected error checking Mongo reachability", e);
-        }
-    }
+            "mongodb://localhost:27017/" + DB_NAME + "?replicaSet=rs0&directConnection=true";
 
     @DynamicPropertySource
     static void mongoProps(DynamicPropertyRegistry registry) {

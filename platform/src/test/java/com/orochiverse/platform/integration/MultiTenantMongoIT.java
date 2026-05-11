@@ -3,11 +3,9 @@ package com.orochiverse.platform.integration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.net.ConnectException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 import org.bson.Document;
 import org.junit.jupiter.api.AfterEach;
@@ -20,17 +18,14 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
-import com.mongodb.MongoClientSettings;
-import com.mongodb.MongoSocketOpenException;
-import com.mongodb.MongoTimeoutException;
 import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoClients;
 
 import com.orochiverse.platform.common.tenant.MissingTenantContextException;
 import com.orochiverse.platform.common.tenant.TenantContext;
 import com.orochiverse.platform.common.tenant.TenantDatabaseProvisioner;
 import com.orochiverse.platform.common.tenant.TenantId;
 import com.orochiverse.platform.common.tenant.TenantMongoTemplateRegistry;
+import com.orochiverse.platform.testsupport.MongoTestSupport;
 
 /**
  * End-to-end test of the Phase 1.3 multi-tenant Mongo wiring against a real
@@ -58,38 +53,12 @@ import com.orochiverse.platform.common.tenant.TenantMongoTemplateRegistry;
  */
 @SpringBootTest
 @ActiveProfiles("integration")
-@EnabledIf("com.orochiverse.platform.integration.MultiTenantMongoIT#mongoIsReachable")
+@EnabledIf("com.orochiverse.platform.testsupport.MongoTestSupport#mongoIsReachable")
 class MultiTenantMongoIT {
-
-    private static final String HOST = "localhost";
-    private static final int PORT = 27017;
-    private static final String CONNECTION_URI =
-            "mongodb://" + HOST + ":" + PORT + "/iam_db?replicaSet=rs0&directConnection=true";
-
-    static boolean mongoIsReachable() {
-        var settings = MongoClientSettings.builder()
-                .applyConnectionString(new com.mongodb.ConnectionString(CONNECTION_URI))
-                .applyToClusterSettings(c -> c.serverSelectionTimeout(2, TimeUnit.SECONDS))
-                .build();
-        try (var client = MongoClients.create(settings)) {
-            client.getDatabase("admin").runCommand(new Document("ping", 1));
-            return true;
-        } catch (MongoTimeoutException | MongoSocketOpenException e) {
-            System.err.println("[MultiTenantMongoIT] Skipping — no Mongo at "
-                    + HOST + ":" + PORT + ". Run ./scripts/dev-up.sh first.");
-            return false;
-        } catch (Exception e) {
-            if (e.getCause() instanceof ConnectException) {
-                System.err.println("[MultiTenantMongoIT] Skipping — Mongo unreachable: " + e.getMessage());
-                return false;
-            }
-            throw new RuntimeException("Unexpected error checking Mongo reachability", e);
-        }
-    }
 
     @DynamicPropertySource
     static void mongoProps(DynamicPropertyRegistry registry) {
-        registry.add("spring.data.mongodb.uri", () -> CONNECTION_URI);
+        MongoTestSupport.mongoProps(registry);
     }
 
     @Autowired MongoClient mongoClient;

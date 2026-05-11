@@ -2,7 +2,6 @@ package com.orochiverse.platform.iam.tenantadmin;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -20,15 +19,17 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import com.orochiverse.platform.common.security.jwt.AccessTokenIssuer;
 import com.orochiverse.platform.common.security.passwords.PasswordHashing;
 import com.orochiverse.platform.common.security.principals.TenantRole;
-import com.orochiverse.platform.common.security.principals.UserKind;
-import com.orochiverse.platform.iam.admin.AdminItSupport;
 import com.orochiverse.platform.iam.tenants.Tenant;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
-import com.orochiverse.platform.iam.users.User;
 import com.orochiverse.platform.iam.users.UserRepository;
 import com.orochiverse.platform.iam.users.UserStatus;
+import com.orochiverse.platform.testsupport.IT;
+import com.orochiverse.platform.testsupport.IamFixtures;
+import com.orochiverse.platform.testsupport.JwtTestSupport;
+import com.orochiverse.platform.testsupport.MongoTestSupport;
 
 /**
  * End-to-end exercise of the {@code /api/tenant/*} surface against real
@@ -38,18 +39,19 @@ import com.orochiverse.platform.iam.users.UserStatus;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("integration")
-@EnabledIf("com.orochiverse.platform.iam.admin.AdminItSupport#mongoIsReachable")
+@EnabledIf("com.orochiverse.platform.testsupport.MongoTestSupport#mongoIsReachable")
 class TenantSelfApiIT {
 
     @DynamicPropertySource
     static void mongoProps(DynamicPropertyRegistry r) {
-        r.add("spring.data.mongodb.uri", () -> AdminItSupport.CONNECTION_URI);
+        MongoTestSupport.mongoProps(r);
     }
 
     @LocalServerPort int port;
     @Autowired UserRepository users;
     @Autowired TenantRepository tenants;
     @Autowired PasswordHashing passwords;
+    @Autowired AccessTokenIssuer issuer;
 
     private String suffix;
     private String tenantA;
@@ -57,12 +59,8 @@ class TenantSelfApiIT {
     private String ownerAId;
     private String ownerAEmail;
     private String adminAId;
-    private String adminAEmail;
     private String editorAId;
-    private String editorAEmail;
     private String ownerBId;
-    private String ownerBEmail;
-    private final String pw = "Tenant123!";
     private String createdInviteId;
 
     private String ownerAToken;
@@ -72,26 +70,36 @@ class TenantSelfApiIT {
 
     @BeforeEach
     void seed() {
-        suffix = AdminItSupport.randomSuffix();
+        suffix = IamFixtures.randomSuffix();
         tenantA = "p18a" + suffix;
         tenantB = "p18b" + suffix;
 
         tenants.save(Tenant.newTrial(tenantA, "Acme " + suffix, "STARTER", "system"));
         tenants.save(Tenant.newTrial(tenantB, "Vega " + suffix, "STARTER", "system"));
 
-        ownerAEmail = "owner-a-" + suffix + "@a.example";
-        ownerAId = saveTenantUser("owner-a-" + suffix, ownerAEmail, tenantA, TenantRole.TENANT_OWNER);
-        adminAEmail = "admin-a-" + suffix + "@a.example";
-        adminAId  = saveTenantUser("admin-a-"  + suffix, adminAEmail,  tenantA, TenantRole.ADMIN);
-        editorAEmail = "editor-a-" + suffix + "@a.example";
-        editorAId = saveTenantUser("editor-a-" + suffix, editorAEmail, tenantA, TenantRole.EDITOR);
-        ownerBEmail = "owner-b-" + suffix + "@b.example";
-        ownerBId = saveTenantUser("owner-b-" + suffix, ownerBEmail, tenantB, TenantRole.TENANT_OWNER);
+        var ownerA = IamFixtures.tenantUser("owner-a-" + suffix, tenantA)
+                .email("owner-a-" + suffix + "@a.example")
+                .role(TenantRole.TENANT_OWNER).save(users, passwords);
+        var adminA = IamFixtures.tenantUser("admin-a-" + suffix, tenantA)
+                .email("admin-a-" + suffix + "@a.example")
+                .role(TenantRole.ADMIN).save(users, passwords);
+        var editorA = IamFixtures.tenantUser("editor-a-" + suffix, tenantA)
+                .email("editor-a-" + suffix + "@a.example")
+                .role(TenantRole.EDITOR).save(users, passwords);
+        var ownerB = IamFixtures.tenantUser("owner-b-" + suffix, tenantB)
+                .email("owner-b-" + suffix + "@b.example")
+                .role(TenantRole.TENANT_OWNER).save(users, passwords);
 
-        ownerAToken  = login(ownerAEmail, pw);
-        adminAToken  = login(adminAEmail, pw);
-        editorAToken = login(editorAEmail, pw);
-        ownerBToken  = login(ownerBEmail, pw);
+        ownerAId    = ownerA.id();
+        ownerAEmail = ownerA.email();
+        adminAId    = adminA.id();
+        editorAId   = editorA.id();
+        ownerBId    = ownerB.id();
+
+        ownerAToken  = JwtTestSupport.token(issuer, ownerA);
+        adminAToken  = JwtTestSupport.token(issuer, adminA);
+        editorAToken = JwtTestSupport.token(issuer, editorA);
+        ownerBToken  = JwtTestSupport.token(issuer, ownerB);
     }
 
     @AfterEach
@@ -112,7 +120,7 @@ class TenantSelfApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void me_returns_user_and_tenant_for_tenant_user() {
-        var resp = AdminItSupport.exchange(url("/api/tenant/me"),
+        var resp = IT.exchange(port, "/api/tenant/me",
                 HttpMethod.GET, ownerAToken, null, Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -130,7 +138,7 @@ class TenantSelfApiIT {
 
     @Test
     void me_requires_authentication() {
-        var resp = new TestRestTemplate().getForEntity(url("/api/tenant/me"), Map.class);
+        var resp = new TestRestTemplate().getForEntity(IT.url(port, "/api/tenant/me"), Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 
@@ -141,7 +149,7 @@ class TenantSelfApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void list_returns_only_users_in_callers_tenant() {
-        var fromA = AdminItSupport.exchange(url("/api/tenant/users?status=ACTIVE"),
+        var fromA = IT.exchange(port, "/api/tenant/users?status=ACTIVE",
                 HttpMethod.GET, ownerAToken, null, List.class);
         assertThat(fromA.getStatusCode()).isEqualTo(HttpStatus.OK);
 
@@ -159,7 +167,7 @@ class TenantSelfApiIT {
     @SuppressWarnings("unchecked")
     void get_returns_404_for_user_in_a_different_tenant() {
         // ownerB exists in iam_db, but ownerA's tenant context shouldn't see them.
-        var resp = AdminItSupport.exchange(url("/api/tenant/users/" + ownerBId),
+        var resp = IT.exchange(port, "/api/tenant/users/" + ownerBId,
                 HttpMethod.GET, ownerAToken, null, Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
@@ -173,7 +181,7 @@ class TenantSelfApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void admin_can_invite_a_tenant_user() {
-        var resp = AdminItSupport.exchange(url("/api/tenant/users"), HttpMethod.POST, adminAToken,
+        var resp = IT.exchange(port, "/api/tenant/users", HttpMethod.POST, adminAToken,
                 Map.of("email", "new-" + suffix + "@a.example",
                         "firstName", "New", "lastName", "User", "role", "EDITOR"),
                 Map.class);
@@ -191,7 +199,7 @@ class TenantSelfApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void editor_cannot_invite() {
-        var resp = AdminItSupport.exchange(url("/api/tenant/users"), HttpMethod.POST, editorAToken,
+        var resp = IT.exchange(port, "/api/tenant/users", HttpMethod.POST, editorAToken,
                 Map.of("email", "x-" + suffix + "@a.example",
                         "firstName", "X", "lastName", "Y", "role", "EDITOR"),
                 Map.class);
@@ -202,7 +210,7 @@ class TenantSelfApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void invite_rejects_TENANT_OWNER_role() {
-        var resp = AdminItSupport.exchange(url("/api/tenant/users"), HttpMethod.POST, ownerAToken,
+        var resp = IT.exchange(port, "/api/tenant/users", HttpMethod.POST, ownerAToken,
                 Map.of("email", "o-" + suffix + "@a.example",
                         "firstName", "O", "lastName", "W", "role", "TENANT_OWNER"),
                 Map.class);
@@ -218,7 +226,7 @@ class TenantSelfApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void admin_can_change_role_of_another_user() {
-        var resp = AdminItSupport.exchange(url("/api/tenant/users/" + editorAId),
+        var resp = IT.exchange(port, "/api/tenant/users/" + editorAId,
                 HttpMethod.PUT, adminAToken,
                 Map.of("role", "VIEWER"), Map.class);
 
@@ -229,7 +237,7 @@ class TenantSelfApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void cannot_demote_the_only_owner() {
-        var resp = AdminItSupport.exchange(url("/api/tenant/users/" + ownerAId),
+        var resp = IT.exchange(port, "/api/tenant/users/" + ownerAId,
                 HttpMethod.PUT, ownerAToken,
                 Map.of("role", "ADMIN"), Map.class);
 
@@ -239,7 +247,7 @@ class TenantSelfApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void update_rejects_promotion_to_TENANT_OWNER() {
-        var resp = AdminItSupport.exchange(url("/api/tenant/users/" + adminAId),
+        var resp = IT.exchange(port, "/api/tenant/users/" + adminAId,
                 HttpMethod.PUT, ownerAToken,
                 Map.of("role", "TENANT_OWNER"), Map.class);
 
@@ -249,7 +257,7 @@ class TenantSelfApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void editor_cannot_update() {
-        var resp = AdminItSupport.exchange(url("/api/tenant/users/" + adminAId),
+        var resp = IT.exchange(port, "/api/tenant/users/" + adminAId,
                 HttpMethod.PUT, editorAToken,
                 Map.of("firstName", "Hijack"), Map.class);
 
@@ -263,7 +271,7 @@ class TenantSelfApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void self_delete_is_blocked() {
-        var resp = AdminItSupport.exchange(url("/api/tenant/users/" + ownerAId),
+        var resp = IT.exchange(port, "/api/tenant/users/" + ownerAId,
                 HttpMethod.DELETE, ownerAToken, null, Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
@@ -273,7 +281,7 @@ class TenantSelfApiIT {
     @SuppressWarnings("unchecked")
     void cross_tenant_delete_returns_404() {
         // ownerA tries to delete ownerB — should look like the user just doesn't exist.
-        var resp = AdminItSupport.exchange(url("/api/tenant/users/" + ownerBId),
+        var resp = IT.exchange(port, "/api/tenant/users/" + ownerBId,
                 HttpMethod.DELETE, ownerAToken, null, Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
@@ -284,7 +292,7 @@ class TenantSelfApiIT {
 
     @Test
     void admin_can_soft_delete_an_editor() {
-        var resp = AdminItSupport.exchange(url("/api/tenant/users/" + editorAId),
+        var resp = IT.exchange(port, "/api/tenant/users/" + editorAId,
                 HttpMethod.DELETE, adminAToken, null, Void.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
@@ -293,28 +301,4 @@ class TenantSelfApiIT {
         assertThat(after.status()).isEqualTo(UserStatus.DELETED);
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Helpers
-    // ─────────────────────────────────────────────────────────────────────
-
-    private String url(String path) {
-        return "http://localhost:" + port + path;
-    }
-
-    private String saveTenantUser(String idSuffix, String email, String tenantId, TenantRole role) {
-        String id = "tu-" + idSuffix;
-        users.save(new User(id, email, passwords.hash(pw),
-                "First", "Last",
-                UserStatus.ACTIVE, UserKind.TENANT_USER, null,
-                tenantId, role, 0, null, Instant.now(), Instant.now()));
-        return id;
-    }
-
-    @SuppressWarnings("unchecked")
-    private String login(String email, String password) {
-        var resp = new TestRestTemplate().postForEntity(
-                url("/api/auth/login"), Map.of("email", email, "password", password), Map.class);
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-        return (String) resp.getBody().get("accessToken");
-    }
 }

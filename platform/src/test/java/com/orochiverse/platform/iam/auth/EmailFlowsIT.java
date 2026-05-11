@@ -25,10 +25,13 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import com.orochiverse.platform.common.security.jwt.AccessTokenIssuer;
 import com.orochiverse.platform.common.security.passwords.PasswordHashing;
-import com.orochiverse.platform.common.security.principals.OperatorRole;
-import com.orochiverse.platform.iam.admin.AdminItSupport;
 import com.orochiverse.platform.iam.users.UserRepository;
+import com.orochiverse.platform.testsupport.IT;
+import com.orochiverse.platform.testsupport.IamFixtures;
+import com.orochiverse.platform.testsupport.JwtTestSupport;
+import com.orochiverse.platform.testsupport.MongoTestSupport;
 
 /**
  * End-to-end exercise of Phase 1.9 against the live MailHog SMTP capture:
@@ -69,12 +72,13 @@ class EmailFlowsIT {
 
     @DynamicPropertySource
     static void mongoProps(DynamicPropertyRegistry r) {
-        r.add("spring.data.mongodb.uri", () -> AdminItSupport.CONNECTION_URI);
+        MongoTestSupport.mongoProps(r);
     }
 
     @LocalServerPort int port;
     @Autowired UserRepository users;
     @Autowired PasswordHashing passwords;
+    @Autowired AccessTokenIssuer issuer;
 
     private String suffix;
     private String adminEmail;
@@ -85,11 +89,15 @@ class EmailFlowsIT {
 
     @BeforeEach
     void setUp() throws Exception {
-        suffix = AdminItSupport.randomSuffix();
-        adminEmail = "admin-mail-" + suffix + "@orochi.example";
-        adminId = AdminItSupport.seedOperator(users, passwords, "admin-mail-" + suffix,
-                adminEmail, "S3cret!", OperatorRole.OPERATOR_ADMIN);
-        adminToken = login(adminEmail, "S3cret!");
+        suffix = IamFixtures.randomSuffix();
+        var admin = IamFixtures.operator(suffix)
+                .id("admin-mail-" + suffix)
+                .email("admin-mail-" + suffix + "@orochi.example")
+                .password("S3cret!")
+                .save(users, passwords);
+        adminId = admin.id();
+        adminEmail = admin.email();
+        adminToken = JwtTestSupport.token(issuer, admin);
         clearMailhog();
     }
 
@@ -112,7 +120,7 @@ class EmailFlowsIT {
         invitedOperatorEmail = "newop-" + suffix + "@orochi.example";
 
         // 1. Invite — service creates user + issues token + sends email.
-        var inviteResp = AdminItSupport.exchange(url("/admin/api/operators"),
+        var inviteResp = IT.exchange(port, "/admin/api/operators",
                 HttpMethod.POST, adminToken,
                 Map.of("email", invitedOperatorEmail,
                         "firstName", "New", "lastName", "Operator", "role", "OPERATOR_SUPPORT"),
@@ -134,7 +142,7 @@ class EmailFlowsIT {
         String token = m.group(1);
 
         // 4. Accept the invite — auto-login pair returned.
-        var accept = new TestRestTemplate().postForEntity(url("/api/auth/accept-invite"),
+        var accept = new TestRestTemplate().postForEntity(IT.url(port, "/api/auth/accept-invite"),
                 Map.of("token", token, "newPassword", "MyNewPass123!"), Map.class);
         assertThat(accept.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(accept.getBody()).containsKey("accessToken").containsKey("refreshToken");
@@ -153,7 +161,7 @@ class EmailFlowsIT {
     @SuppressWarnings("unchecked")
     void replaying_an_invite_token_is_rejected() throws Exception {
         invitedOperatorEmail = "replay-" + suffix + "@orochi.example";
-        var inviteResp = AdminItSupport.exchange(url("/admin/api/operators"),
+        var inviteResp = IT.exchange(port, "/admin/api/operators",
                 HttpMethod.POST, adminToken,
                 Map.of("email", invitedOperatorEmail,
                         "firstName", "R", "lastName", "P", "role", "OPERATOR_SUPPORT"),
@@ -164,12 +172,12 @@ class EmailFlowsIT {
                 .results().findFirst().orElseThrow().group(1);
 
         // First accept succeeds.
-        var first = new TestRestTemplate().postForEntity(url("/api/auth/accept-invite"),
+        var first = new TestRestTemplate().postForEntity(IT.url(port, "/api/auth/accept-invite"),
                 Map.of("token", token, "newPassword", "First!"), Map.class);
         assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
 
         // Second accept with the same token must be rejected.
-        var second = new TestRestTemplate().postForEntity(url("/api/auth/accept-invite"),
+        var second = new TestRestTemplate().postForEntity(IT.url(port, "/api/auth/accept-invite"),
                 Map.of("token", token, "newPassword", "Second!"), Map.class);
         assertThat(second.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
@@ -182,36 +190,36 @@ class EmailFlowsIT {
     @SuppressWarnings("unchecked")
     void forgot_password_emails_a_link_and_reset_changes_the_password() throws Exception {
         // 1. Trigger reset for the seeded admin.
-        var fp = new TestRestTemplate().postForEntity(url("/api/auth/forgot-password"),
+        var fp = new TestRestTemplate().postForEntity(IT.url(port, "/api/auth/forgot-password"),
                 Map.of("email", adminEmail), Void.class);
         assertThat(fp.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
 
         // 2. Pull the email + extract the token.
         String body = waitForEmailTo(adminEmail, Duration.ofSeconds(5));
         assertThat(body)
-                .contains("Hi Op,")  // seeded admin's firstName, see AdminItSupport.seedOperator
+                .contains("Hi Op,")  // seeded admin's firstName, see IamFixtures.OperatorBuilder default
                 .contains("/reset-password?token=");
         String token = TOKEN_PATTERN.matcher(body).results().findFirst().orElseThrow().group(1);
 
         // 3. Reset to a new password.
-        var reset = new TestRestTemplate().postForEntity(url("/api/auth/reset-password"),
+        var reset = new TestRestTemplate().postForEntity(IT.url(port, "/api/auth/reset-password"),
                 Map.of("token", token, "newPassword", "BrandNew99!"), Void.class);
         assertThat(reset.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
 
         // 4. Old password no longer works.
-        var oldLogin = new TestRestTemplate().postForEntity(url("/api/auth/login"),
+        var oldLogin = new TestRestTemplate().postForEntity(IT.url(port, "/api/auth/login"),
                 Map.of("email", adminEmail, "password", "S3cret!"), Map.class);
         assertThat(oldLogin.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
 
         // 5. New password works.
-        var newLogin = new TestRestTemplate().postForEntity(url("/api/auth/login"),
+        var newLogin = new TestRestTemplate().postForEntity(IT.url(port, "/api/auth/login"),
                 Map.of("email", adminEmail, "password", "BrandNew99!"), Map.class);
         assertThat(newLogin.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 
     @Test
     void forgot_password_for_unknown_email_is_silently_204() throws Exception {
-        var resp = new TestRestTemplate().postForEntity(url("/api/auth/forgot-password"),
+        var resp = new TestRestTemplate().postForEntity(IT.url(port, "/api/auth/forgot-password"),
                 Map.of("email", "ghost-" + suffix + "@nowhere.example"), Void.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
@@ -225,7 +233,7 @@ class EmailFlowsIT {
     @Test
     @SuppressWarnings("unchecked")
     void reset_password_with_invalid_token_returns_401() {
-        var resp = new TestRestTemplate().postForEntity(url("/api/auth/reset-password"),
+        var resp = new TestRestTemplate().postForEntity(IT.url(port, "/api/auth/reset-password"),
                 Map.of("token", "never-issued", "newPassword", "Whatever!"), Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
@@ -236,14 +244,12 @@ class EmailFlowsIT {
     // MailHog REST API helpers
     // ─────────────────────────────────────────────────────────────────────
 
-    private String url(String path) {
-        return "http://localhost:" + port + path;
-    }
-
+    // Goes through the real /login HTTP path on purpose — these tests check that
+    // the password just set via accept-invite or reset-password actually authenticates.
     @SuppressWarnings("unchecked")
     private String login(String email, String password) {
         var resp = new TestRestTemplate().postForEntity(
-                url("/api/auth/login"), Map.of("email", email, "password", password), Map.class);
+                IT.url(port, "/api/auth/login"), Map.of("email", email, "password", password), Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         return (String) resp.getBody().get("accessToken");
     }

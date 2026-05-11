@@ -2,9 +2,7 @@ package com.orochiverse.platform.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.net.ConnectException;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 import org.bson.Document;
 import org.junit.jupiter.api.AfterEach;
@@ -19,11 +17,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
-import com.mongodb.MongoClientSettings;
-import com.mongodb.MongoSocketOpenException;
-import com.mongodb.MongoTimeoutException;
-import com.mongodb.client.MongoClients;
-
 import com.orochiverse.platform.common.audit.AuditAction;
 import com.orochiverse.platform.common.audit.AuditEntry;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
@@ -37,6 +30,7 @@ import com.orochiverse.platform.iam.tenants.TenantRepository;
 import com.orochiverse.platform.iam.tenants.TenantStatus;
 import com.orochiverse.platform.iam.users.User;
 import com.orochiverse.platform.iam.users.UserRepository;
+import com.orochiverse.platform.testsupport.MongoTestSupport;
 
 /**
  * End-to-end exercise of the Phase 1.4 data layer — Spring Data Mongo
@@ -50,34 +44,12 @@ import com.orochiverse.platform.iam.users.UserRepository;
  */
 @SpringBootTest
 @ActiveProfiles("integration")
-@EnabledIf("com.orochiverse.platform.integration.IamRepositoriesIT#mongoIsReachable")
+@EnabledIf("com.orochiverse.platform.testsupport.MongoTestSupport#mongoIsReachable")
 class IamRepositoriesIT {
-
-    private static final String CONNECTION_URI =
-            "mongodb://localhost:27017/iam_db?replicaSet=rs0&directConnection=true";
-
-    static boolean mongoIsReachable() {
-        var settings = MongoClientSettings.builder()
-                .applyConnectionString(new com.mongodb.ConnectionString(CONNECTION_URI))
-                .applyToClusterSettings(c -> c.serverSelectionTimeout(2, TimeUnit.SECONDS))
-                .build();
-        try (var client = MongoClients.create(settings)) {
-            client.getDatabase("admin").runCommand(new Document("ping", 1));
-            return true;
-        } catch (MongoTimeoutException | MongoSocketOpenException e) {
-            System.err.println("[IamRepositoriesIT] Skipping — start ./scripts/dev-up.sh first.");
-            return false;
-        } catch (Exception e) {
-            if (e.getCause() instanceof ConnectException) {
-                return false;
-            }
-            throw new RuntimeException(e);
-        }
-    }
 
     @DynamicPropertySource
     static void mongoProps(DynamicPropertyRegistry registry) {
-        registry.add("spring.data.mongodb.uri", () -> CONNECTION_URI);
+        MongoTestSupport.mongoProps(registry);
     }
 
     @Autowired UserRepository users;
