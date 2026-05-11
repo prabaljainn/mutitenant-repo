@@ -56,4 +56,10 @@ public record AuditEntry(
         return new AuditEntry(null, Instant.now(), actorUserId, action, null, null, null,
                 Map.of(), null, null);
     }
+
+    /** Variant for callers that need to attach structured metadata. */
+    public static AuditEntry of(AuditAction action, String actorUserId, Map<String, Object> metadata) {
+        return new AuditEntry(null, Instant.now(), actorUserId, action, null, null, null,
+                Map.copyOf(metadata), null, null);
+    }
 }
