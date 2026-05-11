@@ -8,6 +8,7 @@ Reference material for the Orochiverse multi-tenant platform. Aimed at someone w
 | [`services.md`](services.md) | Runtime view: processes, ports, Docker services, startup order, profiles. |
 | [`tests.md`](tests.md) | Test inventory: every test class with what it verifies and how to run it. |
 | [`configuration.md`](configuration.md) | Every settable property + env var, by profile. |
+| [`roles.md`](roles.md) | UserKind / OperatorRole / TenantRole hierarchy + endpoint authorization matrix. |
 
 For higher-level context:
 - `docs/architecture/` — design docs (system overview, multi-tenancy, auth, email, integration)

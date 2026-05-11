@@ -405,6 +405,109 @@
       ]
     },
     {
+      "name": "Tenant / Self",
+      "description": "Tenant-side self-service. Caller MUST be a TENANT_USER (kind=TENANT_USER + tid in JWT). Tenant id is taken from the JWT — never from the URL — so cross-tenant access is impossible by construction.\n\nReads = any tenant role; writes = TENANT_OWNER or ADMIN.\n\nLogin as a tenant user (e.g. one created via Admin/Operators/Invite into a tenant) before hitting these.",
+      "item": [
+        {
+          "name": "Me (user + tenant)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/tenant/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "tenant", "me"]
+            },
+            "description": "Combined view of the calling tenant user + their tenant document."
+          }
+        },
+        {
+          "name": "List tenant users",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/tenant/users?status=ACTIVE",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "tenant", "users"],
+              "query": [
+                { "key": "status", "value": "ACTIVE", "description": "Optional. INVITED | ACTIVE | SUSPENDED | DELETED. Default ACTIVE." }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get tenant user",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/tenant/users/{{tenantUserId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "tenant", "users", "{{tenantUserId}}"]
+            },
+            "description": "Cross-tenant ids return 404 — same as a missing user — to avoid leaking existence."
+          }
+        },
+        {
+          "name": "Invite tenant user",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"new-member@acme.example\",\n  \"firstName\": \"New\",\n  \"lastName\": \"Member\",\n  \"role\": \"EDITOR\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/tenant/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "tenant", "users"]
+            },
+            "description": "TENANT_OWNER or ADMIN only. role can be ADMIN | EDITOR | VIEWER — TENANT_OWNER is rejected (use ownership-transfer flow). Captures the new id into `tenantUserId`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('tenantUserId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update tenant user (role / status)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"VIEWER\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/tenant/users/{{tenantUserId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "tenant", "users", "{{tenantUserId}}"]
+            },
+            "description": "Partial update. Allowed: firstName, lastName, role, status. Cannot promote to TENANT_OWNER, cannot demote/suspend the last owner, cannot set status=DELETED via PUT."
+          }
+        },
+        {
+          "name": "Delete tenant user (soft)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/tenant/users/{{tenantUserId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "tenant", "users", "{{tenantUserId}}"]
+            },
+            "description": "Soft-delete (status=DELETED). Self-delete blocked. Last-owner delete blocked. Revokes the deleted user's refresh tokens."
+          }
+        }
+      ]
+    },
+    {
       "name": "Public",
       "description": "Endpoints that don't require auth.",
       "item": [

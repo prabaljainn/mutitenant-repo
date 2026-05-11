@@ -30,7 +30,9 @@ import com.orochiverse.platform.iam.admin.common.AdminExceptions.UnprocessableEx
  * from {@link com.orochiverse.platform.common.tenant.TenantId#requireValid}
  * land here as 400s instead of as a generic 500.
  */
-@RestControllerAdvice(basePackages = "com.orochiverse.platform.iam.admin")
+@RestControllerAdvice(basePackages = {
+        "com.orochiverse.platform.iam.admin",
+        "com.orochiverse.platform.iam.tenantadmin"})
 @ConditionalOnProperty(prefix = "spring.data.mongodb", name = "uri")
 public class AdminExceptionHandler {
 
