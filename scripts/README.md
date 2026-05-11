@@ -11,6 +11,7 @@ One-liners for the local dev loop. All scripts read `deployment/.env`
 | `dev-logs.sh [service]` | Tail logs from all services, or one. |
 | `dev-status.sh` | Container status + connectivity checks for Mongo / Redis / Mailhog. |
 | `run-app.sh [--debug] [--suspend] [--no-deps]` | Run the Spring Boot app with the right Mongo/Redis/Mailhog wiring. `--debug` opens JDWP on `$APP_DEBUG_PORT` (default 5005). `--suspend` makes the JVM wait for a debugger to attach before booting. |
+| `dev-rerun.sh [--reset] [--debug] [--no-app]` | One-shot: kill any process on `$APP_PORT`, restart the Docker stack, re-run the app. `--reset` also wipes Mongo + Redis volumes (drops `iam_db` + every `tenant_<id>_db`). `--no-app` restarts infra only. |
 
 ## Typical day
 
@@ -19,6 +20,15 @@ One-liners for the local dev loop. All scripts read `deployment/.env`
 ./scripts/run-app.sh       # run the app on :8080
 # … work …
 ./scripts/dev-down.sh      # done
+```
+
+## "Rerun everything"
+
+```bash
+./scripts/dev-rerun.sh           # frees :8080, restarts stack, runs app
+./scripts/dev-rerun.sh --reset   # ALSO wipes Mongo data — back to a fresh iam_db
+./scripts/dev-rerun.sh --debug   # rerun with JDWP on :5005
+./scripts/dev-rerun.sh --no-app  # only restart infra
 ```
 
 ## Remote debugging from IntelliJ / VS Code
