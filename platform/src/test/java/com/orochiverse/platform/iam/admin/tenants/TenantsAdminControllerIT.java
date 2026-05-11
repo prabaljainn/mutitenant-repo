@@ -150,6 +150,29 @@ class TenantsAdminControllerIT {
 
     @Test
     @SuppressWarnings("unchecked")
+    void list_filters_by_q_substring_case_insensitive() {
+        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
+                Map.of("id", tenantId, "name", "Skyhawk-" + suffix, "plan", "STARTER"),
+                Map.class);
+
+        // Substring of the tenant name, lowercase — should still match.
+        var hits = IT.exchange(port, "/admin/api/tenants?q=skyhawk",
+                HttpMethod.GET, supportToken, null, List.class);
+        assertThat(hits.getStatusCode()).isEqualTo(HttpStatus.OK);
+        List<String> names = hits.getBody().stream()
+                .map(r -> ((Map<String, Object>) r).get("name").toString())
+                .toList();
+        assertThat(names).anyMatch(n -> n.startsWith("Skyhawk-"));
+
+        // No-match returns an empty list, not a 404.
+        var misses = IT.exchange(port, "/admin/api/tenants?q=zzz-no-such-" + suffix,
+                HttpMethod.GET, supportToken, null, List.class);
+        assertThat(misses.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(misses.getBody()).isEmpty();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void get_unknown_tenant_returns_404() {
         var resp = IT.exchange(port, "/admin/api/tenants/does-not-exist",
                 HttpMethod.GET, supportToken, null, Map.class);

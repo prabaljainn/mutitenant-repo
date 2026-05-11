@@ -24,6 +24,10 @@ class AccessTokenIssuerVerifierTest {
     private JwtKeyProvider keys;
     private JwtProperties props;
     private Clock clock;
+    /** Anchored at @BeforeEach so the issued tokens are always fresh
+     *  relative to the wall clock the verifier reads. JWT iat/exp encode
+     *  to second precision, so we truncate. */
+    private Instant issuedAtAnchor;
     private AccessTokenIssuer issuer;
     private AccessTokenVerifier verifier;
 
@@ -31,7 +35,8 @@ class AccessTokenIssuerVerifierTest {
     void setUp() {
         keys = new EphemeralRsaKeyProvider();
         props = new JwtProperties(ISSUER, Duration.ofMinutes(15), Duration.ofSeconds(30), null, null, null);
-        clock = Clock.fixed(Instant.parse("2026-05-11T12:00:00Z"), ZoneOffset.UTC);
+        issuedAtAnchor = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        clock = Clock.fixed(issuedAtAnchor, ZoneOffset.UTC);
         issuer = new AccessTokenIssuer(keys, props, clock);
         verifier = new AccessTokenVerifier(keys, props);
     }
@@ -56,8 +61,8 @@ class AccessTokenIssuerVerifierTest {
         assertThat(verified.issuer()).isEqualTo(ISSUER);
         assertThat(verified.tokenVersion()).isZero();
         assertThat(verified.jti()).isNotBlank();
-        assertThat(verified.issuedAt()).isEqualTo(Instant.parse("2026-05-11T12:00:00Z"));
-        assertThat(verified.expiresAt()).isEqualTo(Instant.parse("2026-05-11T12:15:00Z"));
+        assertThat(verified.issuedAt()).isEqualTo(issuedAtAnchor);
+        assertThat(verified.expiresAt()).isEqualTo(issuedAtAnchor.plus(Duration.ofMinutes(15)));
     }
 
     @Test

@@ -54,8 +54,9 @@ public class TenantsAdminController {
 
     @GetMapping
     @PreAuthorize("hasRole('OPERATOR')")
-    public List<TenantResponse> list(@RequestParam(required = false) TenantStatus status) {
-        return service.list(status);
+    public List<TenantResponse> list(@RequestParam(required = false) TenantStatus status,
+                                     @RequestParam(required = false) String q) {
+        return service.list(status, q);
     }
 
     @GetMapping("/{id}")

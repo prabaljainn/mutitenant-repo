@@ -66,13 +66,18 @@ public class TenantsAdminService {
     private final TenantRepository tenants;
     private final TenantDatabaseProvisioner provisioner;
     private final AuditEntryRepository audit;
+    private final org.springframework.beans.factory.ObjectProvider<
+            com.orochiverse.platform.iam.settings.TenantSettingsService> settingsCleanup;
 
     public TenantsAdminService(TenantRepository tenants,
                                TenantDatabaseProvisioner provisioner,
-                               AuditEntryRepository audit) {
+                               AuditEntryRepository audit,
+                               org.springframework.beans.factory.ObjectProvider<
+                                       com.orochiverse.platform.iam.settings.TenantSettingsService> settingsCleanup) {
         this.tenants = tenants;
         this.provisioner = provisioner;
         this.audit = audit;
+        this.settingsCleanup = settingsCleanup;
     }
 
     public TenantResponse create(CreateTenantRequest req, String actorUserId) {
@@ -101,8 +106,18 @@ public class TenantsAdminService {
         return TenantResponse.from(saved);
     }
 
-    public List<TenantResponse> list(TenantStatus statusFilter) {
-        var rows = statusFilter == null ? tenants.findAll() : tenants.findAllByStatus(statusFilter);
+    public List<TenantResponse> list(TenantStatus statusFilter, String query) {
+        List<Tenant> rows;
+        boolean hasQuery = query != null && !query.isBlank();
+        if (hasQuery && statusFilter != null) {
+            rows = tenants.searchByStatusAndName(statusFilter, java.util.regex.Pattern.quote(query.trim()));
+        } else if (hasQuery) {
+            rows = tenants.searchByName(java.util.regex.Pattern.quote(query.trim()));
+        } else if (statusFilter != null) {
+            rows = tenants.findAllByStatus(statusFilter);
+        } else {
+            rows = tenants.findAll();
+        }
         return rows.stream().map(TenantResponse::from).toList();
     }
 
@@ -141,7 +156,16 @@ public class TenantsAdminService {
                 existing.settings(), existing.createdBy(), existing.createdAt(), Instant.now());
         tenants.save(archived);
 
+        // Tear down everything keyed by this tenant id: the per-tenant
+        // Mongo database first, then the iam_db-side settings rows. We
+        // don't care about ordering correctness on failure — both are
+        // idempotent and the tenant is now ARCHIVED so re-running this
+        // delete cleans up whatever's left.
         provisioner.deprovision(id);
+        var settings = settingsCleanup.getIfAvailable();
+        if (settings != null) {
+            settings.deleteAllForTenant(id);
+        }
 
         audit.save(AuditEntry.of(AuditAction.TENANT_ARCHIVED, actorUserId,
                 Map.of("tenantId", id)));

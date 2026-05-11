@@ -32,7 +32,8 @@ import com.orochiverse.platform.iam.admin.common.AdminExceptions.UnprocessableEx
  */
 @RestControllerAdvice(basePackages = {
         "com.orochiverse.platform.iam.admin",
-        "com.orochiverse.platform.iam.tenantadmin"})
+        "com.orochiverse.platform.iam.tenantadmin",
+        "com.orochiverse.platform.iam.settings"})
 @ConditionalOnProperty(prefix = "spring.data.mongodb", name = "uri")
 public class AdminExceptionHandler {
 

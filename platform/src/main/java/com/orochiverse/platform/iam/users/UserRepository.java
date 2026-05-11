@@ -31,4 +31,8 @@ public interface UserRepository extends MongoRepository<User, String> {
     List<User> findAllByTenantIdAndStatus(String tenantId, UserStatus status);
 
     long countByTenantId(String tenantId);
+
+    long countByKindAndStatus(UserKind kind, UserStatus status);
+
+    long countByStatus(UserStatus status);
 }
