@@ -5,12 +5,16 @@
 spring:
   autoconfigure:
     exclude:
-      # Mongo IS enabled here. Redis and Mail stay excluded — tests that
-      # need them (Phase 1.5+) will pull them in explicitly.
+      # Mongo IS enabled here. Redis stays excluded.
+      # Mail IS enabled and points at MailHog (1025) so Phase 1.9
+      # invite/reset emails can be verified end-to-end via MailHog's
+      # REST API at :8025.
       - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
       - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
-      - org.springframework.boot.autoconfigure.mail.MailSenderAutoConfiguration
       - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  mail:
+    host: localhost
+    port: 1025
 
 logging:
   level:

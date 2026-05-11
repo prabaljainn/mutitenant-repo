@@ -1,5 +1,8 @@
 package com.orochiverse.platform.iam.auth;
 
+import java.time.Instant;
+import java.util.Map;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -8,6 +11,8 @@ import org.springframework.stereotype.Service;
 import com.orochiverse.platform.common.audit.AuditAction;
 import com.orochiverse.platform.common.audit.AuditEntry;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
+import com.orochiverse.platform.common.email.EmailProperties;
+import com.orochiverse.platform.common.email.EmailService;
 import com.orochiverse.platform.common.security.jwt.AccessTokenIssuer;
 import com.orochiverse.platform.common.security.jwt.JwtProperties;
 import com.orochiverse.platform.common.security.passwords.PasswordHashing;
@@ -15,6 +20,10 @@ import com.orochiverse.platform.common.security.principals.UserKind;
 import com.orochiverse.platform.iam.auth.AuthDtos.SwitchTenantResponse;
 import com.orochiverse.platform.iam.auth.AuthDtos.TokenResponse;
 import com.orochiverse.platform.iam.operators.OperatorAssignmentRepository;
+import com.orochiverse.platform.iam.tokens.InvalidTokenException;
+import com.orochiverse.platform.iam.tokens.SingleUseToken;
+import com.orochiverse.platform.iam.tokens.SingleUseTokenStore;
+import com.orochiverse.platform.iam.tokens.TokenPurpose;
 import com.orochiverse.platform.iam.users.User;
 import com.orochiverse.platform.iam.users.UserRepository;
 import com.orochiverse.platform.iam.users.UserStatus;
@@ -49,24 +58,33 @@ public class AuthService {
     private final UserRepository users;
     private final OperatorAssignmentRepository assignments;
     private final RefreshTokenStore refreshTokens;
+    private final SingleUseTokenStore singleUseTokens;
     private final AccessTokenIssuer issuer;
     private final PasswordHashing passwords;
     private final AuditEntryRepository audit;
+    private final EmailService email;
+    private final EmailProperties emailProps;
     private final long accessTokenTtlSeconds;
 
     public AuthService(UserRepository users,
                        OperatorAssignmentRepository assignments,
                        RefreshTokenStore refreshTokens,
+                       SingleUseTokenStore singleUseTokens,
                        AccessTokenIssuer issuer,
                        PasswordHashing passwords,
                        AuditEntryRepository audit,
+                       EmailService email,
+                       EmailProperties emailProps,
                        JwtProperties jwtProperties) {
         this.users = users;
         this.assignments = assignments;
         this.refreshTokens = refreshTokens;
+        this.singleUseTokens = singleUseTokens;
         this.issuer = issuer;
         this.passwords = passwords;
         this.audit = audit;
+        this.email = email;
+        this.emailProps = emailProps;
         this.accessTokenTtlSeconds = jwtProperties.accessTokenTtl().toSeconds();
     }
 
@@ -186,6 +204,119 @@ public class AuthService {
                 java.util.Map.of("tenantId", tenantId)));
 
         return SwitchTenantResponse.bearer(access, accessTokenTtlSeconds);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Phase 1.9: forgot password / reset password / accept invite
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Always returns to the caller without revealing whether the email
+     * exists. If a real ACTIVE user matches we issue a single-use token
+     * and email a reset link; otherwise we silently no-op. Audit row only
+     * on the matching path so log analysis can distinguish the two.
+     */
+    public void requestPasswordReset(String email) {
+        User user = users.findByEmailIgnoreCase(email).orElse(null);
+        if (user == null || user.status() != UserStatus.ACTIVE) {
+            log.info("password reset requested for unknown/non-active email — silent no-op");
+            return;
+        }
+
+        SingleUseToken token = singleUseTokens.issue(user.id(), TokenPurpose.PASSWORD_RESET);
+        sendResetEmail(user, token);
+        audit.save(AuditEntry.of(AuditAction.PASSWORD_RESET_REQUESTED, user.id(),
+                Map.of("email", user.email())));
+    }
+
+    /**
+     * Validates the token, hashes the new password, and revokes every
+     * outstanding refresh token for that user (otherwise a stolen
+     * refresh would survive the password rotation). Audit
+     * {@code PASSWORD_RESET_COMPLETED}. Does NOT log the user in — the
+     * client navigates back to {@code /login} with the new password.
+     */
+    public void resetPassword(String token, String newPassword) {
+        SingleUseToken consumed = singleUseTokens.consume(token, TokenPurpose.PASSWORD_RESET);
+        User user = users.findById(consumed.userId())
+                .orElseThrow(() -> new InvalidTokenException("user no longer exists"));
+        if (user.status() != UserStatus.ACTIVE) {
+            // Suspended/deleted between issue and consume — invalidate the
+            // attempt rather than silently re-activating.
+            throw new InvalidTokenException("user is not active");
+        }
+
+        users.save(withNewPassword(user, newPassword));
+        refreshTokens.revokeAllForUser(user.id());
+
+        audit.save(AuditEntry.of(AuditAction.PASSWORD_RESET_COMPLETED, user.id(),
+                Map.of("email", user.email())));
+        log.info("password reset completed user={}", user.id());
+    }
+
+    /**
+     * One-step onboarding: validates the invite token, sets the password,
+     * flips status from INVITED to ACTIVE, and returns a fresh access +
+     * refresh pair so the user lands logged in. Audit
+     * {@code PASSWORD_CHANGED} (no dedicated USER_ACTIVATED action yet
+     * — the OPERATOR_INVITED / TENANT_USER_INVITED entry already records
+     * the invite).
+     */
+    public TokenResponse acceptInvite(String token, String newPassword) {
+        SingleUseToken consumed = singleUseTokens.consume(token, TokenPurpose.INVITE_ACCEPT);
+        User user = users.findById(consumed.userId())
+                .orElseThrow(() -> new InvalidTokenException("user no longer exists"));
+        if (user.status() != UserStatus.INVITED) {
+            // Already accepted (and somehow the token survived), or
+            // suspended/deleted. Either way: don't apply.
+            throw new InvalidTokenException("invite is no longer valid");
+        }
+
+        User activated = withPasswordAndStatus(user, newPassword, UserStatus.ACTIVE);
+        users.save(activated);
+
+        audit.save(AuditEntry.of(AuditAction.PASSWORD_CHANGED, user.id(),
+                Map.of("email", user.email(), "via", "invite_accept")));
+        log.info("invite accepted user={} kind={}", user.id(), user.kind());
+
+        // Auto-login: issue access + refresh just like POST /login would.
+        var access = issueAccessTokenForUser(activated, /*tidOverride*/ null);
+        var refresh = refreshTokens.issue(activated.id());
+        return TokenResponse.bearer(access, refresh.token(), accessTokenTtlSeconds);
+    }
+
+    private void sendResetEmail(User user, SingleUseToken token) {
+        String resetUrl = emailProps.baseUrl() + "/reset-password?token=" + token.token();
+        email.send(user.email(),
+                "Reset your Orochiverse password",
+                "password-reset",
+                Map.of(
+                        "firstName", user.firstName(),
+                        "email", user.email(),
+                        "resetUrl", resetUrl,
+                        "expiresAt", token.expiresAt().toString()));
+    }
+
+    /** Returns a copy of {@code user} with a freshly-hashed password. */
+    private User withNewPassword(User user, String rawPassword) {
+        return new User(
+                user.id(), user.email(), passwords.hash(rawPassword),
+                user.firstName(), user.lastName(),
+                user.status(), user.kind(), user.operatorRole(),
+                user.tenantId(), user.tenantRole(),
+                user.tokenVersion() + 1, // bump tv so older access tokens become "stale" (tv check Phase 1.10)
+                user.lastLoginAt(), user.createdAt(), Instant.now());
+    }
+
+    /** Like {@link #withNewPassword} but also flips status. Used by {@link #acceptInvite}. */
+    private User withPasswordAndStatus(User user, String rawPassword, UserStatus status) {
+        return new User(
+                user.id(), user.email(), passwords.hash(rawPassword),
+                user.firstName(), user.lastName(),
+                status, user.kind(), user.operatorRole(),
+                user.tenantId(), user.tenantRole(),
+                user.tokenVersion(),
+                user.lastLoginAt(), user.createdAt(), Instant.now());
     }
 
     // ─────────────────────────────────────────────────────────────────────

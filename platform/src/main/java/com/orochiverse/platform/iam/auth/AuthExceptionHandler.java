@@ -48,6 +48,19 @@ public class AuthExceptionHandler {
                 "Operator is not assigned to this tenant", req);
     }
 
+    /**
+     * Single-use token (invite or password reset) was unknown, expired,
+     * already consumed, or had the wrong purpose. One generic message so
+     * the response can't distinguish those cases from each other —
+     * needed for security parity with login.
+     */
+    @ExceptionHandler(com.orochiverse.platform.iam.tokens.InvalidTokenException.class)
+    public ResponseEntity<Map<String, Object>> invalidToken(
+            com.orochiverse.platform.iam.tokens.InvalidTokenException e, HttpServletRequest req) {
+        return error(HttpStatus.UNAUTHORIZED, "invalid_token",
+                "Token is invalid or expired", req);
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> validation(MethodArgumentNotValidException e,
                                                           HttpServletRequest req) {

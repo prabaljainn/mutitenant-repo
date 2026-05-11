@@ -75,9 +75,18 @@ mongock:
 # - private/public-key-path + key-id: when `private-key-path` is unset the
 #   EphemeralRsaKeyProvider generates a fresh keypair on startup (dev/test).
 #   Production sets these via env vars in application-prod.yml.
+#
+# Phase 1.9: email.
+# - from / reply-to: addresses for outgoing platform email.
+# - base-url: where invite/reset links in those emails point. Distinct from
+#   spring.mail.host (the SMTP server hostname).
 platform:
   security:
     jwt:
       issuer: https://iam.orochiverse.com
       access-token-ttl: PT15M
       clock-skew: PT30S
+  email:
+    from: noreply@orochiverse.local
+    reply-to: support@orochiverse.local
+    base-url: http://localhost:8080

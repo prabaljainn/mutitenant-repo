@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
 import com.orochiverse.platform.common.audit.AuditAction;
 import com.orochiverse.platform.common.audit.AuditEntry;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
+import com.orochiverse.platform.common.email.EmailProperties;
+import com.orochiverse.platform.common.email.EmailService;
 import com.orochiverse.platform.common.security.principals.UserKind;
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.ConflictException;
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.NotFoundException;
@@ -22,6 +24,9 @@ import com.orochiverse.platform.iam.admin.operators.OperatorDtos.InviteOperatorR
 import com.orochiverse.platform.iam.admin.operators.OperatorDtos.OperatorResponse;
 import com.orochiverse.platform.iam.admin.operators.OperatorDtos.UpdateOperatorRequest;
 import com.orochiverse.platform.iam.auth.RefreshTokenStore;
+import com.orochiverse.platform.iam.tokens.SingleUseToken;
+import com.orochiverse.platform.iam.tokens.SingleUseTokenStore;
+import com.orochiverse.platform.iam.tokens.TokenPurpose;
 import com.orochiverse.platform.iam.users.User;
 import com.orochiverse.platform.iam.users.UserRepository;
 import com.orochiverse.platform.iam.users.UserStatus;
@@ -58,14 +63,23 @@ public class OperatorsAdminService {
 
     private final UserRepository users;
     private final RefreshTokenStore refreshTokens;
+    private final SingleUseTokenStore singleUseTokens;
     private final AuditEntryRepository audit;
+    private final EmailService email;
+    private final EmailProperties emailProps;
 
     public OperatorsAdminService(UserRepository users,
                                  RefreshTokenStore refreshTokens,
-                                 AuditEntryRepository audit) {
+                                 SingleUseTokenStore singleUseTokens,
+                                 AuditEntryRepository audit,
+                                 EmailService email,
+                                 EmailProperties emailProps) {
         this.users = users;
         this.refreshTokens = refreshTokens;
+        this.singleUseTokens = singleUseTokens;
         this.audit = audit;
+        this.email = email;
+        this.emailProps = emailProps;
     }
 
     public OperatorResponse invite(InviteOperatorRequest req, String actorUserId) {
@@ -92,11 +106,34 @@ public class OperatorsAdminService {
             throw new ConflictException("user with email " + req.email() + " already exists");
         }
 
+        // Issue a single-use accept token (7-day TTL, see TokenPurpose) and
+        // email the link. Failing to send must NOT roll back the user
+        // creation — admins can re-issue invites manually if SMTP is down.
+        SingleUseToken accept = singleUseTokens.issue(id, TokenPurpose.INVITE_ACCEPT);
+        try {
+            sendOperatorInviteEmail(saved, req.role().name(), accept);
+        } catch (RuntimeException e) {
+            log.warn("operator invite created but email failed id={} email={}: {}",
+                    id, req.email(), e.getMessage());
+        }
+
         audit.save(AuditEntry.of(AuditAction.OPERATOR_INVITED, actorUserId,
                 Map.of("operatorId", id, "email", req.email(), "role", req.role().name())));
         log.info("operator invited id={} email={} role={} actor={}",
                 id, req.email(), req.role(), actorUserId);
         return OperatorResponse.from(saved);
+    }
+
+    private void sendOperatorInviteEmail(User user, String role, SingleUseToken accept) {
+        String acceptUrl = emailProps.baseUrl() + "/accept-invite?token=" + accept.token();
+        email.send(user.email(),
+                "You're invited as an Orochiverse operator",
+                "invite-operator",
+                Map.of(
+                        "firstName", user.firstName(),
+                        "role", role,
+                        "acceptUrl", acceptUrl,
+                        "expiresAt", accept.expiresAt().toString()));
     }
 
     public List<OperatorResponse> list(UserStatus statusFilter) {
@@ -139,6 +176,7 @@ public class OperatorsAdminService {
         if (req.status() != null && req.status() != existing.status()
                 && req.status() == UserStatus.SUSPENDED) {
             refreshTokens.revokeAllForUser(id);
+            singleUseTokens.revokeAllForUser(id);
             audit.save(AuditEntry.of(AuditAction.OPERATOR_SUSPENDED, actorUserId,
                     Map.of("operatorId", id)));
         }
@@ -161,6 +199,7 @@ public class OperatorsAdminService {
         users.save(deleted);
 
         refreshTokens.revokeAllForUser(id);
+        singleUseTokens.revokeAllForUser(id);
 
         audit.save(AuditEntry.of(AuditAction.OPERATOR_DELETED, actorUserId,
                 Map.of("operatorId", id)));

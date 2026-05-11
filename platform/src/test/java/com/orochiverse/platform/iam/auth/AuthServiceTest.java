@@ -38,9 +38,11 @@ class AuthServiceTest {
     private UserRepository users;
     private OperatorAssignmentRepository assignments;
     private RefreshTokenStore refreshTokens;
+    private com.orochiverse.platform.iam.tokens.SingleUseTokenStore singleUseTokens;
     private AccessTokenIssuer issuer;
     private PasswordHashing passwords;
     private AuditEntryRepository audit;
+    private com.orochiverse.platform.common.email.EmailService email;
     private AuthService service;
 
     @BeforeEach
@@ -48,14 +50,19 @@ class AuthServiceTest {
         users = mock(UserRepository.class);
         assignments = mock(OperatorAssignmentRepository.class);
         refreshTokens = mock(RefreshTokenStore.class);
+        singleUseTokens = mock(com.orochiverse.platform.iam.tokens.SingleUseTokenStore.class);
         issuer = mock(AccessTokenIssuer.class);
         passwords = mock(PasswordHashing.class);
         audit = mock(AuditEntryRepository.class);
+        email = mock(com.orochiverse.platform.common.email.EmailService.class);
 
         var jwtProps = new JwtProperties(
                 "https://iam.test", Duration.ofMinutes(15), Duration.ofSeconds(30),
                 null, null, null);
-        service = new AuthService(users, assignments, refreshTokens, issuer, passwords, audit, jwtProps);
+        var emailProps = new com.orochiverse.platform.common.email.EmailProperties(
+                "noreply@test.local", null, "http://localhost:8080");
+        service = new AuthService(users, assignments, refreshTokens, singleUseTokens, issuer,
+                passwords, audit, email, emailProps, jwtProps);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -245,6 +252,167 @@ class AuthServiceTest {
 
         assertThatThrownBy(() -> service.switchTenant("tu-1", "acme"))
                 .isInstanceOf(OperatorNotAssignedException.class);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Phase 1.9: forgot password
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    void forgot_password_silently_no_ops_for_unknown_email() {
+        when(users.findByEmailIgnoreCase("ghost@x.example")).thenReturn(Optional.empty());
+
+        service.requestPasswordReset("ghost@x.example");
+
+        verify(singleUseTokens, never()).issue(any(), any());
+        verify(email, never()).send(any(), any(), any(), any());
+        verify(audit, never()).save(any());
+    }
+
+    @Test
+    void forgot_password_silently_no_ops_for_suspended_user() {
+        when(users.findByEmailIgnoreCase("op@x.example"))
+                .thenReturn(Optional.of(suspendedOperator("op-1", "op@x.example")));
+
+        service.requestPasswordReset("op@x.example");
+
+        verify(singleUseTokens, never()).issue(any(), any());
+        verify(email, never()).send(any(), any(), any(), any());
+    }
+
+    @Test
+    void forgot_password_issues_token_emails_link_and_audits_for_active_user() {
+        var op = activeOperator("op-1", "op@x.example", OperatorRole.OPERATOR_ADMIN);
+        when(users.findByEmailIgnoreCase("op@x.example")).thenReturn(Optional.of(op));
+        var token = new com.orochiverse.platform.iam.tokens.SingleUseToken(
+                "reset-token", "op-1",
+                com.orochiverse.platform.iam.tokens.TokenPurpose.PASSWORD_RESET,
+                Instant.now(), Instant.now().plus(Duration.ofHours(1)));
+        when(singleUseTokens.issue(eq("op-1"),
+                eq(com.orochiverse.platform.iam.tokens.TokenPurpose.PASSWORD_RESET)))
+                .thenReturn(token);
+
+        service.requestPasswordReset("op@x.example");
+
+        verify(email).send(eq("op@x.example"), eq("Reset your Orochiverse password"),
+                eq("password-reset"), any());
+        ArgumentCaptor<AuditEntry> entry = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).save(entry.capture());
+        assertThat(entry.getValue().action()).isEqualTo(AuditAction.PASSWORD_RESET_REQUESTED);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Phase 1.9: reset password
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    void reset_password_with_invalid_token_throws() {
+        when(singleUseTokens.consume(eq("rotten"),
+                eq(com.orochiverse.platform.iam.tokens.TokenPurpose.PASSWORD_RESET)))
+                .thenThrow(new com.orochiverse.platform.iam.tokens.InvalidTokenException("nope"));
+
+        assertThatThrownBy(() -> service.resetPassword("rotten", "newPass!"))
+                .isInstanceOf(com.orochiverse.platform.iam.tokens.InvalidTokenException.class);
+
+        verify(users, never()).save(any());
+    }
+
+    @Test
+    void reset_password_hashes_new_password_and_revokes_refresh_tokens() {
+        var op = activeOperator("op-1", "op@x.example", OperatorRole.OPERATOR_ADMIN);
+        when(singleUseTokens.consume(eq("good"),
+                eq(com.orochiverse.platform.iam.tokens.TokenPurpose.PASSWORD_RESET)))
+                .thenReturn(new com.orochiverse.platform.iam.tokens.SingleUseToken(
+                        "good", "op-1",
+                        com.orochiverse.platform.iam.tokens.TokenPurpose.PASSWORD_RESET,
+                        Instant.now(), Instant.now().plus(Duration.ofMinutes(30))));
+        when(users.findById("op-1")).thenReturn(Optional.of(op));
+        when(passwords.hash("newPass!")).thenReturn("hashed-new");
+        when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.resetPassword("good", "newPass!");
+
+        ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
+        verify(users).save(saved.capture());
+        assertThat(saved.getValue().passwordHash()).isEqualTo("hashed-new");
+        assertThat(saved.getValue().tokenVersion()).isEqualTo(op.tokenVersion() + 1);
+        verify(refreshTokens).revokeAllForUser("op-1");
+
+        ArgumentCaptor<AuditEntry> entry = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).save(entry.capture());
+        assertThat(entry.getValue().action()).isEqualTo(AuditAction.PASSWORD_RESET_COMPLETED);
+    }
+
+    @Test
+    void reset_password_rejects_when_user_no_longer_active() {
+        when(singleUseTokens.consume(eq("good"),
+                eq(com.orochiverse.platform.iam.tokens.TokenPurpose.PASSWORD_RESET)))
+                .thenReturn(new com.orochiverse.platform.iam.tokens.SingleUseToken(
+                        "good", "op-1",
+                        com.orochiverse.platform.iam.tokens.TokenPurpose.PASSWORD_RESET,
+                        Instant.now(), Instant.now().plus(Duration.ofMinutes(30))));
+        when(users.findById("op-1")).thenReturn(Optional.of(suspendedOperator("op-1", "x@x")));
+
+        assertThatThrownBy(() -> service.resetPassword("good", "newPass!"))
+                .isInstanceOf(com.orochiverse.platform.iam.tokens.InvalidTokenException.class);
+
+        verify(users, never()).save(any());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Phase 1.9: accept invite
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    void accept_invite_activates_user_and_returns_tokens() {
+        // INVITED operator with no password yet.
+        Instant t = Instant.parse("2026-05-11T00:00:00Z");
+        var invited = new User("op-1", "op@x.example", null, "First", "Last",
+                UserStatus.INVITED, UserKind.OPERATOR, OperatorRole.OPERATOR_ADMIN,
+                null, null, 0, null, t, t);
+        when(singleUseTokens.consume(eq("invite"),
+                eq(com.orochiverse.platform.iam.tokens.TokenPurpose.INVITE_ACCEPT)))
+                .thenReturn(new com.orochiverse.platform.iam.tokens.SingleUseToken(
+                        "invite", "op-1",
+                        com.orochiverse.platform.iam.tokens.TokenPurpose.INVITE_ACCEPT,
+                        Instant.now(), Instant.now().plus(Duration.ofDays(1))));
+        when(users.findById("op-1")).thenReturn(Optional.of(invited));
+        when(passwords.hash("welcome!")).thenReturn("hashed-welcome");
+        when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(issuer.issue(any(), any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(new com.orochiverse.platform.common.security.jwt.AccessTokenIssuer.Issued(
+                        "access-jwt", null));
+        when(refreshTokens.issue("op-1"))
+                .thenReturn(new RefreshToken("rt", "op-1",
+                        Instant.now(), Instant.now().plus(Duration.ofDays(30))));
+
+        var resp = service.acceptInvite("invite", "welcome!");
+
+        assertThat(resp.accessToken()).isEqualTo("access-jwt");
+        assertThat(resp.refreshToken()).isEqualTo("rt");
+
+        ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
+        verify(users).save(saved.capture());
+        assertThat(saved.getValue().status()).isEqualTo(UserStatus.ACTIVE);
+        assertThat(saved.getValue().passwordHash()).isEqualTo("hashed-welcome");
+    }
+
+    @Test
+    void accept_invite_rejects_already_active_user() {
+        // Token re-use after the user was already activated some other way.
+        var op = activeOperator("op-1", "op@x.example", OperatorRole.OPERATOR_ADMIN);
+        when(singleUseTokens.consume(eq("invite"),
+                eq(com.orochiverse.platform.iam.tokens.TokenPurpose.INVITE_ACCEPT)))
+                .thenReturn(new com.orochiverse.platform.iam.tokens.SingleUseToken(
+                        "invite", "op-1",
+                        com.orochiverse.platform.iam.tokens.TokenPurpose.INVITE_ACCEPT,
+                        Instant.now(), Instant.now().plus(Duration.ofDays(1))));
+        when(users.findById("op-1")).thenReturn(Optional.of(op));
+
+        assertThatThrownBy(() -> service.acceptInvite("invite", "welcome!"))
+                .isInstanceOf(com.orochiverse.platform.iam.tokens.InvalidTokenException.class);
+
+        verify(users, never()).save(any());
     }
 
     // ─────────────────────────────────────────────────────────────────────

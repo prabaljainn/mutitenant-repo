@@ -151,6 +151,75 @@
               }
             }
           ]
+        },
+        {
+          "name": "Forgot password",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/forgot-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "forgot-password"]
+            },
+            "description": "Always returns 204. If the email matches a real ACTIVE user, a reset link is emailed (open MailHog at http://localhost:8025 to read it). Unknown / suspended emails are silently no-op'd to prevent account enumeration."
+          }
+        },
+        {
+          "name": "Reset password",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"PASTE_TOKEN_FROM_EMAIL\",\n  \"newPassword\": \"BrandNew123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/reset-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "reset-password"]
+            },
+            "description": "204 on success. 401 (invalid_token) if the token is unknown / expired / already used. The user's refresh tokens are revoked as a side effect. Does NOT auto-login — go back to /login with the new password."
+          }
+        },
+        {
+          "name": "Accept invite",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"PASTE_TOKEN_FROM_EMAIL\",\n  \"newPassword\": \"NewPass123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/accept-invite",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "accept-invite"]
+            },
+            "description": "Sets the password and flips the user from INVITED → ACTIVE. Returns a TokenResponse so the user lands logged in. Token comes from the invite email — open MailHog to grab it. Captures accessToken/refreshToken into the env."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  pm.environment.set('accessToken', j.accessToken);",
+                  "  pm.environment.set('refreshToken', j.refreshToken);",
+                  "}"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

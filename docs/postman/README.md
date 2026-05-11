@@ -76,6 +76,20 @@ Then top-right **environment selector** → choose **"Orochiverse Local (dev)"**
 - **Switch-tenant** replaces `accessToken` so following calls see the new `tid` in `Me`.
 - **Logout** clears `accessToken` and `refreshToken` from the env so accidental replays fail clean.
 
+### Invite + password-reset flows (Phase 1.9)
+
+These flows email the user a secret token. In dev the SMTP server is **MailHog** — open the inbox at **http://localhost:8025** to grab the token from the rendered email body.
+
+Typical "invite an operator end-to-end":
+1. **Admin / Operators → Invite operator** as `OPERATOR_ADMIN`. Server creates the user (`status=INVITED`, no password) AND emails them an accept link.
+2. Open MailHog at http://localhost:8025, find the email, copy the token from `?token=…` in the body.
+3. **Auth → Accept invite** with that token + a new password. Server activates the user and returns a fresh access+refresh pair (auto-captured into the env). The user is now logged in.
+
+Forgot-password is symmetric:
+1. **Auth → Forgot password** with the email — always returns 204 (no enumeration leak).
+2. Open MailHog, copy the token.
+3. **Auth → Reset password** with token + new password → 204. Refresh tokens for that user are revoked. Log in fresh with the new password.
+
 ### Environment variables
 
 | Variable | Default | Notes |

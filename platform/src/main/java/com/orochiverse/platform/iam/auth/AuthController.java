@@ -13,9 +13,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.orochiverse.platform.common.security.auth.AuthenticatedUser;
+import com.orochiverse.platform.iam.auth.AuthDtos.AcceptInviteRequest;
+import com.orochiverse.platform.iam.auth.AuthDtos.ForgotPasswordRequest;
 import com.orochiverse.platform.iam.auth.AuthDtos.LoginRequest;
 import com.orochiverse.platform.iam.auth.AuthDtos.LogoutRequest;
 import com.orochiverse.platform.iam.auth.AuthDtos.RefreshRequest;
+import com.orochiverse.platform.iam.auth.AuthDtos.ResetPasswordRequest;
 import com.orochiverse.platform.iam.auth.AuthDtos.SwitchTenantRequest;
 import com.orochiverse.platform.iam.auth.AuthDtos.SwitchTenantResponse;
 import com.orochiverse.platform.iam.auth.AuthDtos.TokenResponse;
@@ -71,5 +74,37 @@ public class AuthController {
     public SwitchTenantResponse switchTenant(@AuthenticationPrincipal AuthenticatedUser user,
                                              @Valid @RequestBody SwitchTenantRequest req) {
         return auth.switchTenant(user.claims().userId(), req.tenantId());
+    }
+
+    /**
+     * Always 204 — never tells the caller whether the email exists, to
+     * prevent account enumeration. The email is sent only when a real
+     * ACTIVE user matches; the rest is silent.
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Void> forgotPassword(@Valid @RequestBody ForgotPasswordRequest req) {
+        auth.requestPasswordReset(req.email());
+        return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
+    }
+
+    /**
+     * 204 on success. {@link InvalidRefreshTokenException}-style 401 from
+     * the {@link AuthExceptionHandler} on bad/expired/already-consumed
+     * tokens. Does NOT log the user in — the SPA navigates to /login.
+     */
+    @PostMapping("/reset-password")
+    public ResponseEntity<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest req) {
+        auth.resetPassword(req.token(), req.newPassword());
+        return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
+    }
+
+    /**
+     * One-step onboarding: validates the invite, sets the password, flips
+     * status to ACTIVE, and returns a fresh access + refresh pair so the
+     * user lands logged in.
+     */
+    @PostMapping("/accept-invite")
+    public TokenResponse acceptInvite(@Valid @RequestBody AcceptInviteRequest req) {
+        return auth.acceptInvite(req.token(), req.newPassword());
     }
 }

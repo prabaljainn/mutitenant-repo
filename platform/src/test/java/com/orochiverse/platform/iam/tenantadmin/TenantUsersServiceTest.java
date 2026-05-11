@@ -37,16 +37,35 @@ class TenantUsersServiceTest {
     private static final String OTHER_TENANT = "vega";
 
     private UserRepository users;
+    private com.orochiverse.platform.iam.tenants.TenantRepository tenants;
     private RefreshTokenStore refreshTokens;
+    private com.orochiverse.platform.iam.tokens.SingleUseTokenStore singleUseTokens;
     private AuditEntryRepository audit;
+    private com.orochiverse.platform.common.email.EmailService email;
     private TenantUsersService service;
 
     @BeforeEach
     void setUp() {
         users = mock(UserRepository.class);
+        tenants = mock(com.orochiverse.platform.iam.tenants.TenantRepository.class);
         refreshTokens = mock(RefreshTokenStore.class);
+        singleUseTokens = mock(com.orochiverse.platform.iam.tokens.SingleUseTokenStore.class);
         audit = mock(AuditEntryRepository.class);
-        service = new TenantUsersService(users, refreshTokens, audit);
+        email = mock(com.orochiverse.platform.common.email.EmailService.class);
+        var emailProps = new com.orochiverse.platform.common.email.EmailProperties(
+                "noreply@test.local", null, "http://localhost:8080");
+        // Default: token issuance returns a stub so invite()'s email-send
+        // path doesn't NPE. Tests can override per-method if needed.
+        when(singleUseTokens.issue(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq(
+                        com.orochiverse.platform.iam.tokens.TokenPurpose.INVITE_ACCEPT)))
+                .thenAnswer(inv -> new com.orochiverse.platform.iam.tokens.SingleUseToken(
+                        "stub-token", inv.getArgument(0),
+                        com.orochiverse.platform.iam.tokens.TokenPurpose.INVITE_ACCEPT,
+                        java.time.Instant.now(),
+                        java.time.Instant.now().plus(java.time.Duration.ofDays(7))));
+        service = new TenantUsersService(users, tenants, refreshTokens, singleUseTokens, audit,
+                email, emailProps);
     }
 
     // ─────────────────────────────────────────────────────────────────────

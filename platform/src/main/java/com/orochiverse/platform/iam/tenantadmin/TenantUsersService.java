@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
 import com.orochiverse.platform.common.audit.AuditAction;
 import com.orochiverse.platform.common.audit.AuditEntry;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
+import com.orochiverse.platform.common.email.EmailProperties;
+import com.orochiverse.platform.common.email.EmailService;
 import com.orochiverse.platform.common.security.principals.TenantRole;
 import com.orochiverse.platform.common.security.principals.UserKind;
 import com.orochiverse.platform.common.tenant.TenantContext;
@@ -24,6 +26,11 @@ import com.orochiverse.platform.iam.auth.RefreshTokenStore;
 import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.InviteTenantUserRequest;
 import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.TenantUserResponse;
 import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.UpdateTenantUserRequest;
+import com.orochiverse.platform.iam.tenants.Tenant;
+import com.orochiverse.platform.iam.tenants.TenantRepository;
+import com.orochiverse.platform.iam.tokens.SingleUseToken;
+import com.orochiverse.platform.iam.tokens.SingleUseTokenStore;
+import com.orochiverse.platform.iam.tokens.TokenPurpose;
 import com.orochiverse.platform.iam.users.User;
 import com.orochiverse.platform.iam.users.UserRepository;
 import com.orochiverse.platform.iam.users.UserStatus;
@@ -67,15 +74,27 @@ public class TenantUsersService {
     private static final Logger log = LoggerFactory.getLogger(TenantUsersService.class);
 
     private final UserRepository users;
+    private final TenantRepository tenants;
     private final RefreshTokenStore refreshTokens;
+    private final SingleUseTokenStore singleUseTokens;
     private final AuditEntryRepository audit;
+    private final EmailService email;
+    private final EmailProperties emailProps;
 
     public TenantUsersService(UserRepository users,
+                              TenantRepository tenants,
                               RefreshTokenStore refreshTokens,
-                              AuditEntryRepository audit) {
+                              SingleUseTokenStore singleUseTokens,
+                              AuditEntryRepository audit,
+                              EmailService email,
+                              EmailProperties emailProps) {
         this.users = users;
+        this.tenants = tenants;
         this.refreshTokens = refreshTokens;
+        this.singleUseTokens = singleUseTokens;
         this.audit = audit;
+        this.email = email;
+        this.emailProps = emailProps;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -111,11 +130,39 @@ public class TenantUsersService {
             throw new ConflictException("user with email " + req.email() + " already exists");
         }
 
+        // Email the invitee with a single-use accept link. Failures don't
+        // roll back the user — admins can re-issue invites manually.
+        SingleUseToken accept = singleUseTokens.issue(id, TokenPurpose.INVITE_ACCEPT);
+        try {
+            sendTenantUserInviteEmail(saved, tenantId, req.role().name(), accept);
+        } catch (RuntimeException e) {
+            log.warn("tenant user invite created but email failed id={} email={}: {}",
+                    id, req.email(), e.getMessage());
+        }
+
         audit.save(auditEntry(AuditAction.TENANT_USER_INVITED, actorUserId, tenantId,
                 Map.of("tenantUserId", id, "email", req.email(), "role", req.role().name())));
         log.info("tenant user invited tenant={} id={} email={} role={} actor={}",
                 tenantId, id, req.email(), req.role(), actorUserId);
         return TenantUserResponse.from(saved);
+    }
+
+    private void sendTenantUserInviteEmail(User user, String tenantId, String role,
+                                           SingleUseToken accept) {
+        // Resolve the tenant name for the email body. The display name is
+        // worth one extra read here so the invite isn't an opaque "you've
+        // been added to <id>".
+        String tenantName = tenants.findById(tenantId).map(Tenant::name).orElse(tenantId);
+        String acceptUrl = emailProps.baseUrl() + "/accept-invite?token=" + accept.token();
+        email.send(user.email(),
+                "You're invited to " + tenantName + " on Orochiverse",
+                "invite-tenant-user",
+                Map.of(
+                        "firstName", user.firstName(),
+                        "tenantName", tenantName,
+                        "role", role,
+                        "acceptUrl", acceptUrl,
+                        "expiresAt", accept.expiresAt().toString()));
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -187,6 +234,7 @@ public class TenantUsersService {
         if (req.status() != null && req.status() != existing.status()
                 && req.status() == UserStatus.SUSPENDED) {
             refreshTokens.revokeAllForUser(id);
+            singleUseTokens.revokeAllForUser(id);
             audit.save(auditEntry(AuditAction.TENANT_USER_SUSPENDED, actorUserId, tenantId,
                     Map.of("tenantUserId", id)));
         }
@@ -219,6 +267,7 @@ public class TenantUsersService {
         users.save(deleted);
 
         refreshTokens.revokeAllForUser(id);
+        singleUseTokens.revokeAllForUser(id);
 
         audit.save(auditEntry(AuditAction.TENANT_USER_DELETED, actorUserId, tenantId,
                 Map.of("tenantUserId", id)));

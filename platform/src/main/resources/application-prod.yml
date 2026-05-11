@@ -40,3 +40,7 @@ platform:
       private-key-path: ${PLATFORM_JWT_PRIVATE_KEY_PATH:?PLATFORM_JWT_PRIVATE_KEY_PATH must be set in production}
       public-key-path: ${PLATFORM_JWT_PUBLIC_KEY_PATH:?PLATFORM_JWT_PUBLIC_KEY_PATH must be set in production}
       key-id: ${PLATFORM_JWT_KEY_ID:?PLATFORM_JWT_KEY_ID must be set in production}
+  email:
+    from: ${PLATFORM_EMAIL_FROM:?PLATFORM_EMAIL_FROM must be set in production}
+    reply-to: ${PLATFORM_EMAIL_REPLY_TO:}
+    base-url: ${PLATFORM_EMAIL_BASE_URL:?PLATFORM_EMAIL_BASE_URL must be set in production}

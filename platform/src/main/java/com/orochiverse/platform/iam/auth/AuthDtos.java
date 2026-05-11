@@ -24,6 +24,29 @@ public final class AuthDtos {
     public record SwitchTenantRequest(@NotBlank String tenantId) {}
 
     /**
+     * {@code POST /api/auth/forgot-password}. Always returns 204 — we
+     * never tell the caller whether the email exists, to prevent account
+     * enumeration. The email gets sent only if a real ACTIVE user matches.
+     */
+    public record ForgotPasswordRequest(@Email @NotBlank String email) {}
+
+    /**
+     * {@code POST /api/auth/reset-password}. Both fields required.
+     * Password complexity rules are intentionally minimal here (non-blank);
+     * stronger rules belong in a separate validator that the SPA can also
+     * enforce client-side.
+     */
+    public record ResetPasswordRequest(@NotBlank String token, @NotBlank String newPassword) {}
+
+    /**
+     * {@code POST /api/auth/accept-invite}. Same shape as reset; different
+     * semantics — sets the password AND flips status from INVITED to
+     * ACTIVE, then returns a {@link TokenResponse} so the user is logged
+     * in in one step.
+     */
+    public record AcceptInviteRequest(@NotBlank String token, @NotBlank String newPassword) {}
+
+    /**
      * Returned by {@code POST /login} and {@code POST /refresh}.
      *
      * @param accessToken    the signed JWT to send as {@code Authorization: Bearer ...}
