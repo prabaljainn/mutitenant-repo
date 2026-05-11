@@ -75,4 +75,4 @@ exec ./mvnw -B -ntp \
     spring-boot:run \
     -Dspring-boot.run.jvmArguments="$JOINED_JVM" \
     -Dspring-boot.run.arguments="$JOINED_SPRING" \
-    "${EXTRA_ARGS[@]}"
+    ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}

@@ -62,8 +62,12 @@ public class SecurityConfig {
     }
 
     @Bean
-    JwtAuthenticationFilter jwtAuthenticationFilter(AccessTokenVerifier verifier) {
-        return new JwtAuthenticationFilter(verifier);
+    JwtAuthenticationFilter jwtAuthenticationFilter(
+            AccessTokenVerifier verifier,
+            org.springframework.beans.factory.ObjectProvider<
+                    com.orochiverse.platform.common.security.auth.TokenVersionLookup> tvResolver,
+            com.orochiverse.platform.common.observability.AuthMetrics metrics) {
+        return new JwtAuthenticationFilter(verifier, tvResolver, metrics);
     }
 
     @Bean

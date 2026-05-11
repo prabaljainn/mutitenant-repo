@@ -10,9 +10,11 @@ import jakarta.servlet.http.HttpServletResponse;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.orochiverse.platform.common.observability.RequestIdMdcFilter;
 import com.orochiverse.platform.common.security.jwt.AccessTokenClaims;
 import com.orochiverse.platform.common.security.jwt.AccessTokenVerifier;
 import com.orochiverse.platform.common.security.jwt.JwtVerificationException;
@@ -69,9 +71,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
 
     private final AccessTokenVerifier verifier;
+    /**
+     * Optional: only present when {@code spring.data.mongodb.uri} is set,
+     * because that's where the resolver reads the user's current tv from.
+     * In the {@code test} profile (no Mongo) the bean doesn't exist and
+     * we skip the check — fine because there's no user store to consult
+     * and unit tests don't care.
+     */
+    private final TokenVersionLookup tvResolver;
+    private final com.orochiverse.platform.common.observability.AuthMetrics metrics;
 
-    public JwtAuthenticationFilter(AccessTokenVerifier verifier) {
+    public JwtAuthenticationFilter(AccessTokenVerifier verifier,
+                                   org.springframework.beans.factory.ObjectProvider<TokenVersionLookup> tvResolver,
+                                   com.orochiverse.platform.common.observability.AuthMetrics metrics) {
         this.verifier = verifier;
+        this.tvResolver = tvResolver.getIfAvailable();
+        this.metrics = metrics;
     }
 
     @Override
@@ -97,8 +112,30 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
+        // Token-version revocation check (Phase 1.10). When the user's
+        // current tv has moved past the claim's tv, the token was issued
+        // before a password change / suspension and must be rejected.
+        if (tvResolver != null) {
+            int currentTv = tvResolver.currentVersion(claims.userId());
+            if (currentTv != claims.tokenVersion()) {
+                log.debug("Rejecting bearer for user {}: claim tv={} != current tv={}",
+                        claims.userId(), claims.tokenVersion(), currentTv);
+                metrics.tokenVersionMismatch();
+                chain.doFilter(request, response);
+                return;
+            }
+        }
+
         var auth = new AuthenticatedUser(claims, AuthorityResolver.resolve(claims));
         SecurityContextHolder.getContext().setAuthentication(auth);
+
+        // Populate the user/tenant MDC slots reserved by the logback pattern.
+        // RequestIdMdcFilter owns requestId; we own these two and clear
+        // them in finally so they don't leak across requests.
+        MDC.put(RequestIdMdcFilter.MDC_USER_ID, claims.userId());
+        if (claims.activeTenantId() != null) {
+            MDC.put(RequestIdMdcFilter.MDC_TENANT_ID, claims.activeTenantId());
+        }
 
         try {
             if (claims.activeTenantId() != null) {
@@ -108,6 +145,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
         } finally {
             SecurityContextHolder.clearContext();
+            MDC.remove(RequestIdMdcFilter.MDC_USER_ID);
+            MDC.remove(RequestIdMdcFilter.MDC_TENANT_ID);
         }
     }
 

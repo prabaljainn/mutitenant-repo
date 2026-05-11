@@ -16,6 +16,7 @@ import com.orochiverse.platform.common.audit.AuditEntry;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
 import com.orochiverse.platform.common.email.EmailProperties;
 import com.orochiverse.platform.common.email.EmailService;
+import com.orochiverse.platform.common.observability.AuthMetrics;
 import com.orochiverse.platform.common.security.principals.UserKind;
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.ConflictException;
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.NotFoundException;
@@ -67,19 +68,22 @@ public class OperatorsAdminService {
     private final AuditEntryRepository audit;
     private final EmailService email;
     private final EmailProperties emailProps;
+    private final AuthMetrics metrics;
 
     public OperatorsAdminService(UserRepository users,
                                  RefreshTokenStore refreshTokens,
                                  SingleUseTokenStore singleUseTokens,
                                  AuditEntryRepository audit,
                                  EmailService email,
-                                 EmailProperties emailProps) {
+                                 EmailProperties emailProps,
+                                 AuthMetrics metrics) {
         this.users = users;
         this.refreshTokens = refreshTokens;
         this.singleUseTokens = singleUseTokens;
         this.audit = audit;
         this.email = email;
         this.emailProps = emailProps;
+        this.metrics = metrics;
     }
 
     public OperatorResponse invite(InviteOperatorRequest req, String actorUserId) {
@@ -119,6 +123,7 @@ public class OperatorsAdminService {
 
         audit.save(AuditEntry.of(AuditAction.OPERATOR_INVITED, actorUserId,
                 Map.of("operatorId", id, "email", req.email(), "role", req.role().name())));
+        metrics.inviteOperator();
         log.info("operator invited id={} email={} role={} actor={}",
                 id, req.email(), req.role(), actorUserId);
         return OperatorResponse.from(saved);

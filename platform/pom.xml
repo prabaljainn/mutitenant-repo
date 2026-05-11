@@ -114,6 +114,14 @@
             <version>${mongock.version}</version>
         </dependency>
 
+        <!-- Caffeine — Phase 1.10 token-version cache + login rate limiter.
+             Tiny dep, expiring maps with no Spring magic. -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+            <version>3.1.8</version>
+        </dependency>
+
         <!-- ====== Test scope ====== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

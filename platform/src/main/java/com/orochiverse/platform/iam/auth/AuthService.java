@@ -13,6 +13,7 @@ import com.orochiverse.platform.common.audit.AuditEntry;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
 import com.orochiverse.platform.common.email.EmailProperties;
 import com.orochiverse.platform.common.email.EmailService;
+import com.orochiverse.platform.common.observability.AuthMetrics;
 import com.orochiverse.platform.common.security.jwt.AccessTokenIssuer;
 import com.orochiverse.platform.common.security.jwt.JwtProperties;
 import com.orochiverse.platform.common.security.passwords.PasswordHashing;
@@ -64,6 +65,10 @@ public class AuthService {
     private final AuditEntryRepository audit;
     private final EmailService email;
     private final EmailProperties emailProps;
+    private final LoginRateLimiter rateLimiter;
+    private final org.springframework.beans.factory.ObjectProvider<
+            com.orochiverse.platform.common.security.auth.TokenVersionLookup> tvResolver;
+    private final AuthMetrics metrics;
     private final long accessTokenTtlSeconds;
 
     public AuthService(UserRepository users,
@@ -75,6 +80,10 @@ public class AuthService {
                        AuditEntryRepository audit,
                        EmailService email,
                        EmailProperties emailProps,
+                       LoginRateLimiter rateLimiter,
+                       org.springframework.beans.factory.ObjectProvider<
+                               com.orochiverse.platform.common.security.auth.TokenVersionLookup> tvResolver,
+                       AuthMetrics metrics,
                        JwtProperties jwtProperties) {
         this.users = users;
         this.assignments = assignments;
@@ -85,6 +94,9 @@ public class AuthService {
         this.audit = audit;
         this.email = email;
         this.emailProps = emailProps;
+        this.rateLimiter = rateLimiter;
+        this.tvResolver = tvResolver;
+        this.metrics = metrics;
         this.accessTokenTtlSeconds = jwtProperties.accessTokenTtl().toSeconds();
     }
 
@@ -99,22 +111,38 @@ public class AuthService {
      * single {@link InvalidCredentialsException} so the response can't be
      * used to enumerate accounts.
      */
-    public TokenResponse login(String email, String rawPassword) {
+    public TokenResponse login(String email, String rawPassword, String ip) {
+        // Throttle BEFORE doing any DB / hashing work — denies attackers
+        // the per-attempt CPU + I/O cost in addition to the auth signal.
+        try {
+            rateLimiter.check(email, ip);
+        } catch (RateLimitExceededException e) {
+            metrics.loginRateLimited();
+            throw e;
+        }
+
         User user = users.findByEmailIgnoreCase(email).orElse(null);
 
         if (user == null || !passwords.matches(rawPassword, user.passwordHash())) {
+            rateLimiter.recordFailure(email, ip);
             recordLoginFailure(email);
+            metrics.loginFailure();
             throw new InvalidCredentialsException("invalid email or password");
         }
         if (user.status() != UserStatus.ACTIVE) {
+            rateLimiter.recordFailure(email, ip);
             recordLoginFailure(email);
+            metrics.loginFailure();
             throw new InvalidCredentialsException("invalid email or password");
         }
+
+        rateLimiter.recordSuccess(email, ip);
 
         var access = issueAccessTokenForUser(user, /*tidOverride*/ null);
         var refresh = refreshTokens.issue(user.id());
 
         audit.save(AuditEntry.of(AuditAction.LOGIN_SUCCESS, user.id()));
+        metrics.loginSuccess();
         log.info("login ok user={} kind={}", user.id(), user.kind());
 
         return TokenResponse.bearer(access, refresh.token(), accessTokenTtlSeconds);
@@ -227,6 +255,7 @@ public class AuthService {
         sendResetEmail(user, token);
         audit.save(AuditEntry.of(AuditAction.PASSWORD_RESET_REQUESTED, user.id(),
                 Map.of("email", user.email())));
+        metrics.passwordResetRequested();
     }
 
     /**
@@ -248,9 +277,16 @@ public class AuthService {
 
         users.save(withNewPassword(user, newPassword));
         refreshTokens.revokeAllForUser(user.id());
+        // Bump invalidates cached tv so existing access tokens are
+        // rejected on their next request (within the cache window).
+        var resolver = tvResolver.getIfAvailable();
+        if (resolver != null) {
+            resolver.invalidate(user.id());
+        }
 
         audit.save(AuditEntry.of(AuditAction.PASSWORD_RESET_COMPLETED, user.id(),
                 Map.of("email", user.email())));
+        metrics.passwordResetCompleted();
         log.info("password reset completed user={}", user.id());
     }
 

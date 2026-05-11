@@ -64,8 +64,10 @@ class TenantUsersServiceTest {
                         com.orochiverse.platform.iam.tokens.TokenPurpose.INVITE_ACCEPT,
                         java.time.Instant.now(),
                         java.time.Instant.now().plus(java.time.Duration.ofDays(7))));
+        var metrics = new com.orochiverse.platform.common.observability.AuthMetrics(
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
         service = new TenantUsersService(users, tenants, refreshTokens, singleUseTokens, audit,
-                email, emailProps);
+                email, emailProps, metrics);
     }
 
     // ─────────────────────────────────────────────────────────────────────

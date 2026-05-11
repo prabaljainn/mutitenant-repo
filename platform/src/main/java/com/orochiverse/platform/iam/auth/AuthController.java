@@ -1,5 +1,6 @@
 package com.orochiverse.platform.iam.auth;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -48,8 +49,23 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public TokenResponse login(@Valid @RequestBody LoginRequest req) {
-        return auth.login(req.email(), req.password());
+    public TokenResponse login(@Valid @RequestBody LoginRequest req, HttpServletRequest http) {
+        return auth.login(req.email(), req.password(), clientIp(http));
+    }
+
+    /**
+     * Trusts {@code X-Forwarded-For} when present (Spring Boot's
+     * {@code server.forward-headers-strategy=framework} validates the chain).
+     * Falls back to the direct socket address.
+     */
+    private static String clientIp(HttpServletRequest req) {
+        String xff = req.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) {
+            // X-Forwarded-For: client, proxy1, proxy2 — first hop is the original.
+            int comma = xff.indexOf(',');
+            return comma < 0 ? xff.trim() : xff.substring(0, comma).trim();
+        }
+        return req.getRemoteAddr();
     }
 
     @PostMapping("/refresh")

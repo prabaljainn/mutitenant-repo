@@ -48,6 +48,13 @@ public class AuthExceptionHandler {
                 "Operator is not assigned to this tenant", req);
     }
 
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> rateLimited(RateLimitExceededException e,
+                                                           HttpServletRequest req) {
+        return error(HttpStatus.TOO_MANY_REQUESTS, "rate_limited",
+                "Too many failed attempts; try again later", req);
+    }
+
     /**
      * Single-use token (invite or password reset) was unknown, expired,
      * already consumed, or had the wrong purpose. One generic message so

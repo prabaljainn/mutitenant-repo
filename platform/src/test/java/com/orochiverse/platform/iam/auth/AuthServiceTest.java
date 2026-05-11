@@ -61,8 +61,15 @@ class AuthServiceTest {
                 null, null, null);
         var emailProps = new com.orochiverse.platform.common.email.EmailProperties(
                 "noreply@test.local", null, "http://localhost:8080");
+        var rateLimiter = new com.orochiverse.platform.iam.auth.LoginRateLimiter();
+        @SuppressWarnings("unchecked")
+        var tvProvider = (org.springframework.beans.factory.ObjectProvider<
+                com.orochiverse.platform.common.security.auth.TokenVersionLookup>)
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        var metrics = new com.orochiverse.platform.common.observability.AuthMetrics(
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
         service = new AuthService(users, assignments, refreshTokens, singleUseTokens, issuer,
-                passwords, audit, email, emailProps, jwtProps);
+                passwords, audit, email, emailProps, rateLimiter, tvProvider, metrics, jwtProps);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -81,7 +88,7 @@ class AuthServiceTest {
                 .thenReturn(new RefreshToken("the-refresh-token", "op-1",
                         Instant.now(), Instant.now().plus(Duration.ofDays(30))));
 
-        var resp = service.login("op@x.example", "hunter2");
+        var resp = service.login("op@x.example", "hunter2", "127.0.0.1");
 
         assertThat(resp.accessToken()).isEqualTo("the-access-token");
         assertThat(resp.refreshToken()).isEqualTo("the-refresh-token");
@@ -98,7 +105,7 @@ class AuthServiceTest {
     void login_rejects_unknown_email_and_audits_failure() {
         when(users.findByEmailIgnoreCase("ghost@x.example")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.login("ghost@x.example", "anything"))
+        assertThatThrownBy(() -> service.login("ghost@x.example", "anything", "127.0.0.1"))
                 .isInstanceOf(InvalidCredentialsException.class);
 
         ArgumentCaptor<AuditEntry> entry = ArgumentCaptor.forClass(AuditEntry.class);
@@ -116,7 +123,7 @@ class AuthServiceTest {
         when(users.findByEmailIgnoreCase("op@x.example")).thenReturn(Optional.of(op));
         when(passwords.matches("wrong", op.passwordHash())).thenReturn(false);
 
-        assertThatThrownBy(() -> service.login("op@x.example", "wrong"))
+        assertThatThrownBy(() -> service.login("op@x.example", "wrong", "127.0.0.1"))
                 .isInstanceOf(InvalidCredentialsException.class);
 
         verify(audit, times(1)).save(any());
@@ -134,7 +141,7 @@ class AuthServiceTest {
         when(users.findByEmailIgnoreCase("op@x.example")).thenReturn(Optional.of(suspended));
         when(passwords.matches("hunter2", suspended.passwordHash())).thenReturn(true);
 
-        assertThatThrownBy(() -> service.login("op@x.example", "hunter2"))
+        assertThatThrownBy(() -> service.login("op@x.example", "hunter2", "127.0.0.1"))
                 .isInstanceOf(InvalidCredentialsException.class);
 
         verify(refreshTokens, never()).issue(any());

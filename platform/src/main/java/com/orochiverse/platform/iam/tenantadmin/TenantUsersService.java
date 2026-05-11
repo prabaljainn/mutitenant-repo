@@ -16,6 +16,7 @@ import com.orochiverse.platform.common.audit.AuditEntry;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
 import com.orochiverse.platform.common.email.EmailProperties;
 import com.orochiverse.platform.common.email.EmailService;
+import com.orochiverse.platform.common.observability.AuthMetrics;
 import com.orochiverse.platform.common.security.principals.TenantRole;
 import com.orochiverse.platform.common.security.principals.UserKind;
 import com.orochiverse.platform.common.tenant.TenantContext;
@@ -80,6 +81,7 @@ public class TenantUsersService {
     private final AuditEntryRepository audit;
     private final EmailService email;
     private final EmailProperties emailProps;
+    private final AuthMetrics metrics;
 
     public TenantUsersService(UserRepository users,
                               TenantRepository tenants,
@@ -87,7 +89,8 @@ public class TenantUsersService {
                               SingleUseTokenStore singleUseTokens,
                               AuditEntryRepository audit,
                               EmailService email,
-                              EmailProperties emailProps) {
+                              EmailProperties emailProps,
+                              AuthMetrics metrics) {
         this.users = users;
         this.tenants = tenants;
         this.refreshTokens = refreshTokens;
@@ -95,6 +98,7 @@ public class TenantUsersService {
         this.audit = audit;
         this.email = email;
         this.emailProps = emailProps;
+        this.metrics = metrics;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -142,6 +146,7 @@ public class TenantUsersService {
 
         audit.save(auditEntry(AuditAction.TENANT_USER_INVITED, actorUserId, tenantId,
                 Map.of("tenantUserId", id, "email", req.email(), "role", req.role().name())));
+        metrics.inviteTenantUser();
         log.info("tenant user invited tenant={} id={} email={} role={} actor={}",
                 tenantId, id, req.email(), req.role(), actorUserId);
         return TenantUserResponse.from(saved);

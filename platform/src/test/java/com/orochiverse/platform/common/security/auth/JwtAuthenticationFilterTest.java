@@ -40,7 +40,14 @@ class JwtAuthenticationFilterTest {
     @BeforeEach
     void setUp() {
         verifier = mock(AccessTokenVerifier.class);
-        filter = new JwtAuthenticationFilter(verifier);
+        // No-op ObjectProvider — getIfAvailable() returns null so the
+        // filter skips the tv check, matching the original test behavior.
+        @SuppressWarnings("unchecked")
+        var tvProvider = (org.springframework.beans.factory.ObjectProvider<TokenVersionLookup>)
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        var metrics = new com.orochiverse.platform.common.observability.AuthMetrics(
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        filter = new JwtAuthenticationFilter(verifier, tvProvider, metrics);
         req = new MockHttpServletRequest("GET", "/anywhere");
         res = new MockHttpServletResponse();
         chain = mock(FilterChain.class);
