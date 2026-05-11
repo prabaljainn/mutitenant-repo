@@ -6,6 +6,9 @@ import java.util.Objects;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
+import com.orochiverse.platform.common.security.principals.OperatorRole;
+import com.orochiverse.platform.common.security.principals.TenantRole;
+import com.orochiverse.platform.common.security.principals.UserKind;
 import com.orochiverse.platform.common.tenant.TenantId;
 
 /**

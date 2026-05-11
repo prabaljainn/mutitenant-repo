@@ -27,15 +27,15 @@ import com.mongodb.client.MongoClients;
 import com.orochiverse.platform.common.audit.AuditAction;
 import com.orochiverse.platform.common.audit.AuditEntry;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
+import com.orochiverse.platform.common.security.principals.OperatorRole;
+import com.orochiverse.platform.common.security.principals.TenantRole;
+import com.orochiverse.platform.common.security.principals.UserKind;
 import com.orochiverse.platform.iam.operators.OperatorAssignment;
 import com.orochiverse.platform.iam.operators.OperatorAssignmentRepository;
 import com.orochiverse.platform.iam.tenants.Tenant;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
 import com.orochiverse.platform.iam.tenants.TenantStatus;
-import com.orochiverse.platform.iam.users.OperatorRole;
-import com.orochiverse.platform.iam.users.TenantRole;
 import com.orochiverse.platform.iam.users.User;
-import com.orochiverse.platform.iam.users.UserKind;
 import com.orochiverse.platform.iam.users.UserRepository;
 
 /**

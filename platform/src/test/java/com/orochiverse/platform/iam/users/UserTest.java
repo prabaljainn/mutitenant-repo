@@ -5,6 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
+import com.orochiverse.platform.common.security.principals.OperatorRole;
+import com.orochiverse.platform.common.security.principals.TenantRole;
+import com.orochiverse.platform.common.security.principals.UserKind;
+
 class UserTest {
 
     @Test

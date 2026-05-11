@@ -6,6 +6,13 @@ spring:
       enabled: true
   profiles:
     default: dev
+  # We never use Spring Security's default in-memory user (the one that logs
+  # "Using generated security password: ..."). All auth is JWT-based; see
+  # common/security/SecurityConfig.java. Excluding UserDetailsServiceAutoConfiguration
+  # keeps the startup logs clean and removes a dev-only credential surface.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
   data:
     mongodb:
       # Indexes are managed by Mongock changesets in Phase 1.4+, never by
@@ -59,3 +66,18 @@ mongock:
   transactional: false
   migration-scan-package:
     - com.orochiverse.platform.common.migrations.iam
+
+# Phase 1.5: JWT signing + JWKS.
+#
+# - issuer:           goes into the `iss` claim and is enforced by the verifier.
+# - access-token-ttl: 15 minutes per spec §5.1.
+# - clock-skew:       tolerance applied to `iat`/`exp` checks (network drift).
+# - private/public-key-path + key-id: when `private-key-path` is unset the
+#   EphemeralRsaKeyProvider generates a fresh keypair on startup (dev/test).
+#   Production sets these via env vars in application-prod.yml.
+platform:
+  security:
+    jwt:
+      issuer: https://iam.orochiverse.com
+      access-token-ttl: PT15M
+      clock-skew: PT30S

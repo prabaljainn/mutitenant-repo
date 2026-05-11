@@ -1,4 +1,4 @@
-package com.orochiverse.platform.iam.users;
+package com.orochiverse.platform.common.security.principals;
 
 /**
  * Role of a {@link UserKind#TENANT_USER} within their (single) tenant.

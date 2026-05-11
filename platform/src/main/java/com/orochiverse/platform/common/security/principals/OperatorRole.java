@@ -1,4 +1,4 @@
-package com.orochiverse.platform.iam.users;
+package com.orochiverse.platform.common.security.principals;
 
 /**
  * Role of an Orochiverse operator user across all tenants they're assigned to.

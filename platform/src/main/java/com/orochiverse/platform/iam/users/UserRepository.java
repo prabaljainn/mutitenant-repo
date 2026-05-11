@@ -7,6 +7,7 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.stereotype.Repository;
 
 import com.orochiverse.platform.common.data.IamScoped;
+import com.orochiverse.platform.common.security.principals.UserKind;
 
 /**
  * Spring Data Mongo repository for {@link User} living in {@code iam_db.users}.

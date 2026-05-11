@@ -9,9 +9,9 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import com.orochiverse.platform.common.tenant.TenantId;
 
 /**
- * Grants an {@link com.orochiverse.platform.iam.users.UserKind#OPERATOR}
+ * Grants an {@link com.orochiverse.platform.common.security.principals.UserKind#OPERATOR}
  * user the right to act inside one tenant. The operator's
- * {@link com.orochiverse.platform.iam.users.OperatorRole} (stored on the
+ * {@link com.orochiverse.platform.common.security.principals.OperatorRole} (stored on the
  * user record) determines what they can do; this row simply enumerates
  * <em>which</em> tenants they can do it in.
  *
