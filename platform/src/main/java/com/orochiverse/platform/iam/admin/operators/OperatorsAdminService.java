@@ -1,0 +1,178 @@
+package com.orochiverse.platform.iam.admin.operators;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+
+import com.orochiverse.platform.common.audit.AuditAction;
+import com.orochiverse.platform.common.audit.AuditEntry;
+import com.orochiverse.platform.common.audit.AuditEntryRepository;
+import com.orochiverse.platform.common.security.principals.UserKind;
+import com.orochiverse.platform.iam.admin.common.AdminExceptions.ConflictException;
+import com.orochiverse.platform.iam.admin.common.AdminExceptions.NotFoundException;
+import com.orochiverse.platform.iam.admin.common.AdminExceptions.UnprocessableException;
+import com.orochiverse.platform.iam.admin.operators.OperatorDtos.InviteOperatorRequest;
+import com.orochiverse.platform.iam.admin.operators.OperatorDtos.OperatorResponse;
+import com.orochiverse.platform.iam.admin.operators.OperatorDtos.UpdateOperatorRequest;
+import com.orochiverse.platform.iam.auth.RefreshTokenStore;
+import com.orochiverse.platform.iam.users.User;
+import com.orochiverse.platform.iam.users.UserRepository;
+import com.orochiverse.platform.iam.users.UserStatus;
+
+/**
+ * Operator-user lifecycle: invite → activate (out-of-band) → optionally
+ * suspend / role-change / soft-delete.
+ *
+ * <h2>Invite flow (this phase)</h2>
+ * <ol>
+ *   <li>Reject if email already exists in {@code iam_db.users}.</li>
+ *   <li>Create the user with {@link UserStatus#INVITED}, no password.</li>
+ *   <li>Audit {@code OPERATOR_INVITED}.</li>
+ *   <li>(Phase 1.9 will email the invitee a link that lets them set a
+ *       password and flips their status to {@link UserStatus#ACTIVE}.)</li>
+ * </ol>
+ *
+ * <h2>Status side-effects</h2>
+ * Any transition <em>away from</em> {@code ACTIVE} also revokes every
+ * outstanding refresh token for the user — otherwise a suspended operator
+ * would keep getting fresh access tokens for up to the refresh TTL.
+ *
+ * <h2>Why no hard delete?</h2>
+ * Audit rows reference {@code actorUserId}; assignments reference
+ * {@code operatorUserId}. Removing the user document would orphan both.
+ * Soft-delete (status=DELETED) preserves historical context and lets us
+ * lazily reclaim the email on a future invite.
+ */
+@Service
+@ConditionalOnProperty(prefix = "spring.data.mongodb", name = "uri")
+public class OperatorsAdminService {
+
+    private static final Logger log = LoggerFactory.getLogger(OperatorsAdminService.class);
+
+    private final UserRepository users;
+    private final RefreshTokenStore refreshTokens;
+    private final AuditEntryRepository audit;
+
+    public OperatorsAdminService(UserRepository users,
+                                 RefreshTokenStore refreshTokens,
+                                 AuditEntryRepository audit) {
+        this.users = users;
+        this.refreshTokens = refreshTokens;
+        this.audit = audit;
+    }
+
+    public OperatorResponse invite(InviteOperatorRequest req, String actorUserId) {
+        if (users.existsByEmailIgnoreCase(req.email())) {
+            throw new ConflictException("user with email " + req.email() + " already exists");
+        }
+
+        // Stable-ish id: operator-<uuid8>. Random-ish so it's not guessable
+        // and deterministic in length so reports look uniform.
+        String id = "operator-" + UUID.randomUUID().toString().substring(0, 8);
+        Instant now = Instant.now();
+
+        var invited = new User(
+                id, req.email(), null, // null passwordHash — invite-accept flow sets it
+                req.firstName(), req.lastName(),
+                UserStatus.INVITED, UserKind.OPERATOR, req.role(),
+                null, null, 0, null, now, now);
+
+        User saved;
+        try {
+            saved = users.save(invited);
+        } catch (DuplicateKeyException e) {
+            // Race on the unique email index.
+            throw new ConflictException("user with email " + req.email() + " already exists");
+        }
+
+        audit.save(AuditEntry.of(AuditAction.OPERATOR_INVITED, actorUserId,
+                Map.of("operatorId", id, "email", req.email(), "role", req.role().name())));
+        log.info("operator invited id={} email={} role={} actor={}",
+                id, req.email(), req.role(), actorUserId);
+        return OperatorResponse.from(saved);
+    }
+
+    public List<OperatorResponse> list(UserStatus statusFilter) {
+        var status = statusFilter == null ? UserStatus.ACTIVE : statusFilter;
+        return users.findAllByKindAndStatus(UserKind.OPERATOR, status).stream()
+                .map(OperatorResponse::from).toList();
+    }
+
+    public OperatorResponse get(String id) {
+        return OperatorResponse.from(loadOperatorOrThrow(id));
+    }
+
+    public OperatorResponse update(String id, UpdateOperatorRequest req, String actorUserId) {
+        User existing = loadOperatorOrThrow(id);
+
+        String firstName = req.firstName() == null ? existing.firstName() : req.firstName();
+        String lastName = req.lastName() == null ? existing.lastName() : req.lastName();
+        var role = req.role() == null ? existing.operatorRole() : req.role();
+        var newStatus = req.status() == null ? existing.status() : req.status();
+
+        if (newStatus == UserStatus.DELETED) {
+            throw new UnprocessableException(
+                    "use DELETE /admin/api/operators/{id} to soft-delete an operator");
+        }
+
+        var updated = new User(
+                existing.id(), existing.email(), existing.passwordHash(),
+                firstName, lastName,
+                newStatus, existing.kind(), role,
+                null, null,
+                existing.tokenVersion(), existing.lastLoginAt(),
+                existing.createdAt(), Instant.now());
+        var saved = users.save(updated);
+
+        if (req.role() != null && req.role() != existing.operatorRole()) {
+            audit.save(AuditEntry.of(AuditAction.OPERATOR_ROLE_CHANGED, actorUserId,
+                    Map.of("operatorId", id, "from", existing.operatorRole().name(),
+                            "to", req.role().name())));
+        }
+        if (req.status() != null && req.status() != existing.status()
+                && req.status() == UserStatus.SUSPENDED) {
+            refreshTokens.revokeAllForUser(id);
+            audit.save(AuditEntry.of(AuditAction.OPERATOR_SUSPENDED, actorUserId,
+                    Map.of("operatorId", id)));
+        }
+        return OperatorResponse.from(saved);
+    }
+
+    public void softDelete(String id, String actorUserId) {
+        User existing = loadOperatorOrThrow(id);
+        if (existing.id().equals(actorUserId)) {
+            throw new UnprocessableException("operators cannot delete themselves");
+        }
+
+        var deleted = new User(
+                existing.id(), existing.email(), existing.passwordHash(),
+                existing.firstName(), existing.lastName(),
+                UserStatus.DELETED, existing.kind(), existing.operatorRole(),
+                null, null,
+                existing.tokenVersion(), existing.lastLoginAt(),
+                existing.createdAt(), Instant.now());
+        users.save(deleted);
+
+        refreshTokens.revokeAllForUser(id);
+
+        audit.save(AuditEntry.of(AuditAction.OPERATOR_DELETED, actorUserId,
+                Map.of("operatorId", id)));
+        log.info("operator deleted id={} actor={}", id, actorUserId);
+    }
+
+    private User loadOperatorOrThrow(String id) {
+        User u = users.findById(id)
+                .orElseThrow(() -> new NotFoundException("operator " + id + " not found"));
+        if (u.kind() != UserKind.OPERATOR) {
+            throw new NotFoundException("user " + id + " is not an operator");
+        }
+        return u;
+    }
+}
