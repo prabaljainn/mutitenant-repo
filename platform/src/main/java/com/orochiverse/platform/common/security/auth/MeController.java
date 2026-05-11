@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.orochiverse.platform.common.tenant.TenantContext;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 /**
  * {@code GET /api/auth/me} — returns the principal Spring resolved from the
  * incoming Bearer JWT.
@@ -24,6 +26,9 @@ import com.orochiverse.platform.common.tenant.TenantContext;
  */
 @RestController
 @RequestMapping("/api/auth")
+@Tag(name = "Auth", description = "Login, refresh, logout, switch-tenant, "
+        + "forgot/reset password, accept invite. Public except where the "
+        + "operation requires an existing session.")
 public class MeController {
 
     @GetMapping("/me")

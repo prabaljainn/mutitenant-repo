@@ -25,6 +25,8 @@ import com.orochiverse.platform.iam.admin.operators.OperatorDtos.OperatorRespons
 import com.orochiverse.platform.iam.admin.operators.OperatorDtos.UpdateOperatorRequest;
 import com.orochiverse.platform.iam.users.UserStatus;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 /**
  * {@code /admin/api/operators} CRUD. Reads are open to any operator;
  * mutations require {@code OPERATOR_ADMIN}.
@@ -32,6 +34,8 @@ import com.orochiverse.platform.iam.users.UserStatus;
 @RestController
 @RequestMapping("/admin/api/operators")
 @ConditionalOnProperty(prefix = "spring.data.mongodb", name = "uri")
+@Tag(name = "Operator: Operators", description = "Operator user CRUD: invite, "
+        + "list, change role, suspend, soft-delete. Mutations require OPERATOR_ADMIN.")
 public class OperatorsAdminController {
 
     private final OperatorsAdminService service;

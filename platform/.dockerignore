@@ -1,3 +1,7 @@
+# Keep the Docker build context tight — anything copied here is sent to
+# the daemon and slows every `docker build`. Add aggressively when in
+# doubt; the COPY commands in the Dockerfile only read what they need.
+
 target/
 .idea/
 .vscode/
@@ -5,4 +9,20 @@ target/
 .DS_Store
 .git/
 .gitignore
+.gitattributes
 README.md
+
+# Local dev artefacts that should never end up in an image
+.env
+.env.*
+!.env.example
+*.log
+hs_err_pid*.log
+
+# Test/CI output
+surefire-reports/
+failsafe-reports/
+
+# OS junk
+Thumbs.db
+.idea_modules/

@@ -25,6 +25,8 @@ import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.TenantUserRespons
 import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.UpdateTenantUserRequest;
 import com.orochiverse.platform.iam.users.UserStatus;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 /**
  * {@code /api/tenant/users} — tenant-side user management. The operating
  * tenant is taken from {@code TenantContext} (bound by the JWT filter
@@ -37,6 +39,8 @@ import com.orochiverse.platform.iam.users.UserStatus;
 @RestController
 @RequestMapping("/api/tenant/users")
 @ConditionalOnProperty(prefix = "spring.data.mongodb", name = "uri")
+@Tag(name = "Tenant: Users", description = "Self-service tenant user CRUD. "
+        + "Reads open to any tenant user; writes require TENANT_OWNER or ADMIN.")
 public class TenantUsersController {
 
     private final TenantUsersService service;

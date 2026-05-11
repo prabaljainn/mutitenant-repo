@@ -14,6 +14,8 @@ import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.TenantMeResponse;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
 import com.orochiverse.platform.iam.users.UserRepository;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 /**
  * {@code GET /api/tenant/me} — combined view of the current tenant user
  * and their tenant. Saves the SPA two extra round-trips on first paint
@@ -26,6 +28,8 @@ import com.orochiverse.platform.iam.users.UserRepository;
 @RestController
 @RequestMapping("/api/tenant")
 @ConditionalOnProperty(prefix = "spring.data.mongodb", name = "uri")
+@Tag(name = "Tenant: Me", description = "Combined principal + tenant view for "
+        + "the SPA. Tenant-user-only — operators land 403.")
 public class TenantMeController {
 
     private final UserRepository users;

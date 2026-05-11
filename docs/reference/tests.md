@@ -11,12 +11,16 @@ Every test class in `platform/src/test/java`, what it verifies, and how to run i
 | Command | Runs |
 |---|---|
 | `./mvnw test` | All Surefire (`*Test.java`) — no infra needed. |
-| `./mvnw verify` | Surefire + Failsafe (`*IT.java`). Failsafe needs the Docker dev stack up (`./scripts/dev-up.sh` for Mongo, `./scripts/dev-mailhog.sh` for SMTP). |
+| `./mvnw verify` | Surefire + Failsafe (`*IT.java`). Failsafe needs the Docker dev stack up (`./scripts/dev-up.sh` brings up Mongo + Redis + MailHog). |
 | `./mvnw test -DskipITs` | Skip integration tests. |
 | `./mvnw test -Dtest=ClassName` | Run one Surefire class. |
 | `./mvnw verify -Dit.test=ClassName` | Run one Failsafe class. |
 
 **Mongo-backed ITs skip themselves** if the dev Mongo isn't reachable — they're gated on `@EnabledIf("com.orochiverse.platform.testsupport.MongoTestSupport#mongoIsReachable")`. `EmailFlowsIT` is gated on MailHog reachability the same way. The other ITs (`JwksEndpointIT`, `AuthFlowIT`) run under the `test` profile and don't need Mongo.
+
+### CI
+
+`.github/workflows/build.yml` runs `./mvnw verify` on every push to `main` and every PR. Surefire (159 tests) runs in full; Failsafe ITs that need Mongo skip themselves on the GitHub runner via the `@EnabledIf` gate, so the build stays green without standing up a dev stack in CI. Test reports are uploaded as an artifact when the job fails. To exercise the Mongo-backed ITs end-to-end, run `./scripts/dev-up.sh && ./mvnw verify` locally.
 
 ---
 

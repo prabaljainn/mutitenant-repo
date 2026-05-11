@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.RestController;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
 import com.orochiverse.platform.iam.admin.audit.AuditDtos.AuditEntryResponse;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 /**
  * Read-only audit query for operators. Supports paging and one of two
  * filters at a time: by actor (operator user id) or by tenant id.
@@ -25,6 +27,8 @@ import com.orochiverse.platform.iam.admin.audit.AuditDtos.AuditEntryResponse;
 @RestController
 @RequestMapping("/admin/api/audit")
 @ConditionalOnProperty(prefix = "spring.data.mongodb", name = "uri")
+@Tag(name = "Operator: Audit", description = "Read-only audit log query. Page + "
+        + "filter by actor or tenant. Open to any operator.")
 public class AuditAdminController {
 
     private static final int MAX_PAGE_SIZE = 200;

@@ -25,6 +25,8 @@ import com.orochiverse.platform.iam.admin.tenants.TenantDtos.TenantResponse;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.UpdateTenantRequest;
 import com.orochiverse.platform.iam.tenants.TenantStatus;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 /**
  * Operator-facing tenant CRUD. Reads are open to any operator; writes
  * require {@code OPERATOR_ADMIN} per spec §7.
@@ -32,6 +34,8 @@ import com.orochiverse.platform.iam.tenants.TenantStatus;
 @RestController
 @RequestMapping("/admin/api/tenants")
 @ConditionalOnProperty(prefix = "spring.data.mongodb", name = "uri")
+@Tag(name = "Operator: Tenants", description = "Operator-facing tenant CRUD. "
+        + "Read open to any operator; writes require OPERATOR_ADMIN.")
 public class TenantsAdminController {
 
     private final TenantsAdminService service;

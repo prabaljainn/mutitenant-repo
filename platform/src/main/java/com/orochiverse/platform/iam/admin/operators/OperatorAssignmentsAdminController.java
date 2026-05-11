@@ -21,6 +21,8 @@ import com.orochiverse.platform.common.security.auth.AuthenticatedUser;
 import com.orochiverse.platform.iam.admin.operators.AssignmentDtos.AssignmentResponse;
 import com.orochiverse.platform.iam.admin.operators.AssignmentDtos.GrantAssignmentRequest;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 /**
  * {@code /admin/api/operators/{operatorId}/assignments} — manage which
  * tenants an operator can act in.
@@ -28,6 +30,8 @@ import com.orochiverse.platform.iam.admin.operators.AssignmentDtos.GrantAssignme
 @RestController
 @RequestMapping("/admin/api/operators/{operatorId}/assignments")
 @ConditionalOnProperty(prefix = "spring.data.mongodb", name = "uri")
+@Tag(name = "Operator: Operator Assignments", description = "Grant or revoke "
+        + "an operator's access to a specific tenant. Mutations require OPERATOR_ADMIN.")
 public class OperatorAssignmentsAdminController {
 
     private final OperatorAssignmentsAdminService service;

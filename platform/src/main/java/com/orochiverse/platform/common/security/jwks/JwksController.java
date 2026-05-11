@@ -15,6 +15,7 @@ import com.orochiverse.platform.common.security.keys.JwtKeyProvider;
 
 import io.jsonwebtoken.security.Jwks;
 import io.jsonwebtoken.security.RsaPublicJwk;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
  * Serves the JSON Web Key Set so that anything verifying our access tokens
@@ -30,6 +31,7 @@ import io.jsonwebtoken.security.RsaPublicJwk;
  * 1.5 only ever publishes one key; rotation lands later.
  */
 @RestController
+@Tag(name = "JWKS", description = "Public JSON Web Key Set for verifying access tokens. Public, cacheable, no auth.")
 public class JwksController {
 
     private final JwtKeyProvider keys;

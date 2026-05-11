@@ -24,6 +24,8 @@ import com.orochiverse.platform.iam.auth.AuthDtos.SwitchTenantRequest;
 import com.orochiverse.platform.iam.auth.AuthDtos.SwitchTenantResponse;
 import com.orochiverse.platform.iam.auth.AuthDtos.TokenResponse;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 /**
  * REST surface for the {@code /api/auth/*} flows. Thin wrapper around
  * {@link AuthService}; the heavy lifting and audit are in the service.
@@ -40,6 +42,9 @@ import com.orochiverse.platform.iam.auth.AuthDtos.TokenResponse;
 @RestController
 @RequestMapping("/api/auth")
 @ConditionalOnProperty(prefix = "spring.data.mongodb", name = "uri")
+@Tag(name = "Auth", description = "Login, refresh, logout, switch-tenant, "
+        + "forgot/reset password, accept invite. Public except where the "
+        + "operation requires an existing session.")
 public class AuthController {
 
     private final AuthService auth;
