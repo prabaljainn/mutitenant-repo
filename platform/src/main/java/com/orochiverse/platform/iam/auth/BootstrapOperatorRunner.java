@@ -22,10 +22,11 @@ import com.orochiverse.platform.iam.users.UserStatus;
  *
  * <h2>Trigger conditions (all required)</h2>
  * <ol>
- *   <li>{@code BOOTSTRAP_OPERATOR_EMAIL} env var (or
- *       {@code platform.bootstrap.operator.email} property) is set.</li>
- *   <li>{@code BOOTSTRAP_OPERATOR_PASSWORD} env var (or
- *       {@code platform.bootstrap.operator.password} property) is set.</li>
+ *   <li>{@code platform.bootstrap.operator.email} property — set via env
+ *       var {@code PLATFORM_BOOTSTRAP_OPERATOR_EMAIL} (Spring relaxed
+ *       binding) or in {@code application-dev.yml}.</li>
+ *   <li>{@code platform.bootstrap.operator.password} property — env var
+ *       {@code PLATFORM_BOOTSTRAP_OPERATOR_PASSWORD}.</li>
  *   <li>No user exists in {@code iam_db.users} with
  *       {@code kind=OPERATOR}.</li>
  * </ol>
@@ -34,9 +35,8 @@ import com.orochiverse.platform.iam.users.UserStatus;
  * and exits — it never silently does nothing. Once a real operator exists,
  * the runner becomes a no-op forever.
  *
- * <p>Guarded by {@code @ConditionalOnBean(UserRepository.class)} so the
- * {@code test} profile (which excludes Mongo and therefore has no
- * {@code UserRepository} bean) skips the runner entirely.
+ * <p>Guarded by {@code @ConditionalOnProperty(spring.data.mongodb.uri)}
+ * so the {@code test} profile (no Mongo) skips it.
  *
  * <h2>Why an env-var seed and not a CLI command?</h2>
  * Containers / Kubernetes deployments naturally surface env vars; a CLI
@@ -69,8 +69,10 @@ public class BootstrapOperatorRunner implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         if (bootstrapEmail.isBlank() || bootstrapPassword.isBlank()) {
-            log.info("Bootstrap operator skipped: BOOTSTRAP_OPERATOR_EMAIL/PASSWORD not set "
-                    + "(this is normal once the first operator exists).");
+            log.info("Bootstrap operator skipped: platform.bootstrap.operator.email/password not "
+                    + "set (env vars PLATFORM_BOOTSTRAP_OPERATOR_EMAIL / "
+                    + "PLATFORM_BOOTSTRAP_OPERATOR_PASSWORD). This is normal once the first "
+                    + "operator exists.");
             return;
         }
 

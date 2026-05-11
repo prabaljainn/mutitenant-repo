@@ -16,3 +16,18 @@ logging:
   level:
     org.springframework.web: INFO
     org.mongodb.driver: WARN
+
+# Dev-only auto-bootstrap of an OPERATOR_ADMIN so a fresh `dev-up.sh +
+# run-app.sh` is immediately usable from Postman / Swagger / curl. The
+# BootstrapOperatorRunner only seeds when no operator exists in iam_db,
+# so this is safe to leave on indefinitely — no duplicates after the
+# first boot.
+#
+# DO NOT use these credentials anywhere reachable from the network. The
+# prod profile leaves these unset; production must inject real ones via
+# PLATFORM_BOOTSTRAP_OPERATOR_EMAIL / PLATFORM_BOOTSTRAP_OPERATOR_PASSWORD.
+platform:
+  bootstrap:
+    operator:
+      email: admin@orochiverse.local
+      password: ChangeMe123!

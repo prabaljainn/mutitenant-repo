@@ -1,0 +1,451 @@
+{
+  "info": {
+    "_postman_id": "orochiverse-platform-m1",
+    "name": "Orochiverse Platform (M1)",
+    "description": "Full M1 surface: auth (login / refresh / logout / switch-tenant / me), operator admin (tenants, operators, operator-assignments, audit), and the public JWKS / actuator endpoints.\n\nLogin and Refresh requests have test scripts that auto-capture `accessToken` and `refreshToken` into the active environment. Switch-tenant captures a new `accessToken`. Every protected request inherits the bearer auth from the collection.\n\nDefault environment expects:\n- baseUrl = http://localhost:8080\n- adminEmail = admin@orochiverse.local\n- adminPassword = ChangeMe123!\n\nThese match the dev profile bootstrap (application-dev.yml). For a fresh stack, run `./scripts/dev-up.sh && ./scripts/run-app.sh` then call Login first.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{accessToken}}", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Token lifecycle. Run **Login** first; it captures `accessToken` + `refreshToken` to the env.",
+      "item": [
+        {
+          "name": "Login (admin)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "POST /api/auth/login — public. Returns access + refresh tokens. Captures both into the active environment."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.environment.set('accessToken', j.accessToken);",
+                  "pm.environment.set('refreshToken', j.refreshToken);",
+                  "console.log('captured accessToken (len ' + j.accessToken.length + ') and refreshToken');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "refresh"]
+            },
+            "description": "POST /api/auth/refresh — public. Single-shot rotation: the old refresh token is invalidated, a fresh access + refresh pair returned."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.environment.set('accessToken', j.accessToken);",
+                  "pm.environment.set('refreshToken', j.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "me"]
+            },
+            "description": "GET /api/auth/me — auth required. Returns the current principal as decoded from the bearer JWT."
+          }
+        },
+        {
+          "name": "Switch tenant (operator only)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenantId\": \"{{tenantId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/switch-tenant",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "switch-tenant"]
+            },
+            "description": "POST /api/auth/switch-tenant — operator only, requires a matching OperatorAssignment. Returns a new access token whose `tid` claim is the requested tenant. The refresh token is unchanged.\n\nThe captured `accessToken` is replaced — subsequent calls go to that tenant's context."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('accessToken', pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "logout"]
+            },
+            "description": "POST /api/auth/logout — auth required. Idempotent revoke of the supplied refresh token. The access token can't be invalidated server-side; it expires within 15 minutes."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));",
+                  "pm.environment.unset('accessToken');",
+                  "pm.environment.unset('refreshToken');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admin / Tenants",
+      "description": "Operator-facing CRUD over customer tenants. Reads = OPERATOR_*; writes = OPERATOR_ADMIN.",
+      "item": [
+        {
+          "name": "Create tenant",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{tenantId}}\",\n  \"name\": \"Acme Corp\",\n  \"plan\": \"STARTER\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/tenants",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "tenants"]
+            },
+            "description": "Creates the tenant document AND provisions a fresh `tenant_<id>_db` database. Idempotent? No — duplicate id returns 409. Tenant id must match `^[a-z0-9][a-z0-9_-]{0,49}$`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('tenantId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List tenants",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/tenants?status=TRIAL",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "tenants"],
+              "query": [
+                { "key": "status", "value": "TRIAL", "description": "Optional. TRIAL | ACTIVE | SUSPENDED | ARCHIVED. Omit for all." }
+              ]
+            },
+            "description": "Lists tenants. Optional `status` filter."
+          }
+        },
+        {
+          "name": "Get tenant",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/tenants/{{tenantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "tenants", "{{tenantId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update tenant",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Corp (renamed)\",\n  \"plan\": \"ENTERPRISE\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/tenants/{{tenantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "tenants", "{{tenantId}}"]
+            },
+            "description": "Partial update. Null fields left alone. Allowed fields: `name`, `plan`, `settings`."
+          }
+        },
+        {
+          "name": "Delete tenant (soft + drop DB)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/tenants/{{tenantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "tenants", "{{tenantId}}"]
+            },
+            "description": "Marks the tenant `ARCHIVED` and drops the `tenant_<id>_db` database. Returns 204."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin / Operators",
+      "description": "Operator-user CRUD. Invites land in INVITED status with no password; Phase 1.9 invite-accept will set one.",
+      "item": [
+        {
+          "name": "Invite operator",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"new.support@orochi.example\",\n  \"firstName\": \"New\",\n  \"lastName\": \"Support\",\n  \"role\": \"OPERATOR_SUPPORT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/operators",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "operators"]
+            },
+            "description": "Creates an operator with status=INVITED. Captures the new id into `operatorId`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('operatorId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List operators",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/operators?status=ACTIVE",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "operators"],
+              "query": [
+                { "key": "status", "value": "ACTIVE", "description": "Optional. INVITED | ACTIVE | SUSPENDED | DELETED. Default ACTIVE." }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get operator",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/operators/{{operatorId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "operators", "{{operatorId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update operator (role / status)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"OPERATOR_ADMIN\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/operators/{{operatorId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "operators", "{{operatorId}}"]
+            },
+            "description": "Partial update — null fields left alone. Allowed: `firstName`, `lastName`, `role`, `status`. Setting `status: SUSPENDED` revokes all of that operator's refresh tokens. Setting `status: DELETED` is rejected (use DELETE)."
+          }
+        },
+        {
+          "name": "Delete operator (soft)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/operators/{{operatorId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "operators", "{{operatorId}}"]
+            },
+            "description": "Soft-delete (status=DELETED). Self-delete is blocked (422)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin / Operator Assignments",
+      "description": "Manage which tenants each operator may act in. The unique compound index (operatorUserId, tenantId) blocks duplicates at the DB layer.",
+      "item": [
+        {
+          "name": "Grant assignment",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenantId\": \"{{tenantId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/operators/{{operatorId}}/assignments",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "operators", "{{operatorId}}", "assignments"]
+            },
+            "description": "Grants `operatorId` access to `tenantId`. 409 if already assigned, 404 if either doesn't exist."
+          }
+        },
+        {
+          "name": "List assignments for operator",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/operators/{{operatorId}}/assignments",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "operators", "{{operatorId}}", "assignments"]
+            }
+          }
+        },
+        {
+          "name": "Revoke assignment",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/operators/{{operatorId}}/assignments/{{tenantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "operators", "{{operatorId}}", "assignments", "{{tenantId}}"]
+            },
+            "description": "Removes the (operator, tenant) assignment. 404 if it didn't exist."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin / Audit",
+      "description": "Read-only paginated audit log. Optional filter by actor or by tenant (one at a time).",
+      "item": [
+        {
+          "name": "Query audit (paginated)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/api/audit?page=0&size=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "api", "audit"],
+              "query": [
+                { "key": "actorUserId", "value": "", "description": "Optional. Filter by who performed the action.", "disabled": true },
+                { "key": "tenantId", "value": "", "description": "Optional. Filter by tenant context.", "disabled": true },
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "50", "description": "Max 200." }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Public",
+      "description": "Endpoints that don't require auth.",
+      "item": [
+        {
+          "name": "JWKS",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/.well-known/jwks.json",
+              "host": ["{{baseUrl}}"],
+              "path": [".well-known", "jwks.json"]
+            },
+            "description": "Public RSA key for verifying access tokens. Cacheable 1h."
+          }
+        },
+        {
+          "name": "Actuator: health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/actuator/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["actuator", "health"]
+            }
+          }
+        },
+        {
+          "name": "Actuator: prometheus",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/actuator/prometheus",
+              "host": ["{{baseUrl}}"],
+              "path": ["actuator", "prometheus"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
