@@ -82,6 +82,8 @@ public class TenantUsersService {
     private final EmailService email;
     private final EmailProperties emailProps;
     private final AuthMetrics metrics;
+    private final org.springframework.beans.factory.ObjectProvider<
+            com.orochiverse.platform.common.security.auth.TokenVersionLookup> tvResolver;
 
     public TenantUsersService(UserRepository users,
                               TenantRepository tenants,
@@ -90,7 +92,9 @@ public class TenantUsersService {
                               AuditEntryRepository audit,
                               EmailService email,
                               EmailProperties emailProps,
-                              AuthMetrics metrics) {
+                              AuthMetrics metrics,
+                              org.springframework.beans.factory.ObjectProvider<
+                                      com.orochiverse.platform.common.security.auth.TokenVersionLookup> tvResolver) {
         this.users = users;
         this.tenants = tenants;
         this.refreshTokens = refreshTokens;
@@ -99,6 +103,20 @@ public class TenantUsersService {
         this.email = email;
         this.emailProps = emailProps;
         this.metrics = metrics;
+        this.tvResolver = tvResolver;
+    }
+
+    /**
+     * Invalidates the cached tv for {@code userId} so the next access-
+     * token check on that user reads the freshly-bumped value rather
+     * than the stale cache entry. ObjectProvider so the test profile
+     * (no Mongo, no resolver bean) is a clean no-op.
+     */
+    private void invalidateTvCache(String userId) {
+        var resolver = tvResolver.getIfAvailable();
+        if (resolver != null) {
+            resolver.invalidate(userId);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -221,16 +239,31 @@ public class TenantUsersService {
         TenantRole role  = req.role()      == null ? existing.tenantRole() : req.role();
         UserStatus status = req.status()   == null ? existing.status()    : req.status();
 
+        // Any change that affects what the user's existing JWT means —
+        // role change OR leaving ACTIVE — bumps tokenVersion. Together
+        // with TokenVersionLookup in JwtAuthenticationFilter (Phase
+        // 1.10), this revokes in-flight access tokens immediately
+        // instead of leaving them valid until the 15-minute access TTL
+        // expires. Cosmetic edits (first/last name) do not bump tv.
+        boolean roleChanged = req.role() != null && req.role() != existing.tenantRole();
+        boolean leftActive  = req.status() != null && req.status() != existing.status()
+                                                  && req.status() != UserStatus.ACTIVE;
+        boolean privilegeChange = roleChanged || leftActive;
+        int newTv = privilegeChange ? existing.tokenVersion() + 1 : existing.tokenVersion();
+
         var updated = new User(
                 existing.id(), existing.email(), existing.passwordHash(),
                 firstName, lastName,
                 status, existing.kind(), null,
                 existing.tenantId(), role,
-                existing.tokenVersion(), existing.lastLoginAt(),
+                newTv, existing.lastLoginAt(),
                 existing.createdAt(), Instant.now());
         var saved = users.save(updated);
+        if (privilegeChange) {
+            invalidateTvCache(id);
+        }
 
-        if (req.role() != null && req.role() != existing.tenantRole()) {
+        if (roleChanged) {
             audit.save(auditEntry(AuditAction.TENANT_USER_ROLE_CHANGED, actorUserId, tenantId,
                     Map.of("tenantUserId", id,
                             "from", existing.tenantRole().name(),
@@ -267,9 +300,10 @@ public class TenantUsersService {
                 existing.firstName(), existing.lastName(),
                 UserStatus.DELETED, existing.kind(), null,
                 existing.tenantId(), existing.tenantRole(),
-                existing.tokenVersion(), existing.lastLoginAt(),
+                existing.tokenVersion() + 1, existing.lastLoginAt(),
                 existing.createdAt(), Instant.now());
         users.save(deleted);
+        invalidateTvCache(id);
 
         refreshTokens.revokeAllForUser(id);
         singleUseTokens.revokeAllForUser(id);

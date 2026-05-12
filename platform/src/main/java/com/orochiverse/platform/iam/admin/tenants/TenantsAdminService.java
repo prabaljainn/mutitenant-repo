@@ -157,14 +157,21 @@ public class TenantsAdminService {
         tenants.save(archived);
 
         // Tear down everything keyed by this tenant id: the per-tenant
-        // Mongo database first, then the iam_db-side settings rows. We
-        // don't care about ordering correctness on failure — both are
-        // idempotent and the tenant is now ARCHIVED so re-running this
-        // delete cleans up whatever's left.
+        // Mongo database first, then the iam_db-side settings rows. The
+        // settings cleanup is best-effort — if it blips we still want
+        // the audit rows to land, so the orphan rows are recoverable
+        // by inspection rather than mystery-state. Both steps are
+        // idempotent; a re-archive cleans up whatever's left.
         provisioner.deprovision(id);
         var settings = settingsCleanup.getIfAvailable();
         if (settings != null) {
-            settings.deleteAllForTenant(id);
+            try {
+                settings.deleteAllForTenant(id);
+            } catch (RuntimeException e) {
+                log.warn("settings cleanup failed for tenant {} — orphan rows left behind; "
+                        + "tenant archive itself succeeded. Re-run delete to clean up.",
+                        id, e);
+            }
         }
 
         audit.save(AuditEntry.of(AuditAction.TENANT_ARCHIVED, actorUserId,

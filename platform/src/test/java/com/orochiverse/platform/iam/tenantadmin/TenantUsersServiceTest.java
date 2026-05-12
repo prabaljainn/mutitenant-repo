@@ -66,8 +66,13 @@ class TenantUsersServiceTest {
                         java.time.Instant.now().plus(java.time.Duration.ofDays(7))));
         var metrics = new com.orochiverse.platform.common.observability.AuthMetrics(
                 new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<
+                com.orochiverse.platform.common.security.auth.TokenVersionLookup> tvProvider =
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(tvProvider.getIfAvailable()).thenReturn(null); // test profile: no resolver bean
         service = new TenantUsersService(users, tenants, refreshTokens, singleUseTokens, audit,
-                email, emailProps, metrics);
+                email, emailProps, metrics, tvProvider);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -231,6 +236,60 @@ class TenantUsersServiceTest {
         verify(refreshTokens).revokeAllForUser("u1");
     }
 
+    @Test
+    void update_to_SUSPENDED_bumps_tokenVersion_so_in_flight_access_tokens_are_rejected() {
+        var u = activeAdmin("u1", TENANT);  // starts with tv=0
+        when(users.findById("u1")).thenReturn(Optional.of(u));
+        when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TenantContext.callIn(TENANT, () -> service.update("u1",
+                new UpdateTenantUserRequest(null, null, null, UserStatus.SUSPENDED),
+                "owner-1"));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(users).save(captor.capture());
+        assertThat(captor.getValue().tokenVersion())
+                .as("suspending a user must bump tv so the JwtAuthenticationFilter "
+                        + "tv check rejects their in-flight access tokens")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void update_role_change_bumps_tokenVersion() {
+        var u = activeAdmin("u1", TENANT);
+        when(users.findById("u1")).thenReturn(Optional.of(u));
+        when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TenantContext.callIn(TENANT, () -> service.update("u1",
+                new UpdateTenantUserRequest(null, null, TenantRole.EDITOR, null),
+                "owner-1"));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(users).save(captor.capture());
+        assertThat(captor.getValue().tokenVersion())
+                .as("demoting ADMIN → EDITOR must bump tv so the old token's "
+                        + "ADMIN authorities don't outlive the change")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void update_cosmetic_edit_does_not_bump_tokenVersion() {
+        var u = activeAdmin("u1", TENANT);
+        when(users.findById("u1")).thenReturn(Optional.of(u));
+        when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TenantContext.callIn(TENANT, () -> service.update("u1",
+                new UpdateTenantUserRequest("NewFirst", null, null, null),
+                "owner-1"));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(users).save(captor.capture());
+        assertThat(captor.getValue().tokenVersion())
+                .as("a first-name edit doesn't change effective privileges; "
+                        + "force-logging-out the user for cosmetic edits is hostile UX")
+                .isEqualTo(0);
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Soft-delete
     // ─────────────────────────────────────────────────────────────────────
@@ -256,7 +315,7 @@ class TenantUsersServiceTest {
     }
 
     @Test
-    void delete_marks_user_deleted_and_revokes_tokens() {
+    void delete_marks_user_deleted_and_revokes_tokens_and_bumps_tv() {
         when(users.findById("u1")).thenReturn(Optional.of(activeAdmin("u1", TENANT)));
         when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -268,6 +327,10 @@ class TenantUsersServiceTest {
         var captor = org.mockito.ArgumentCaptor.forClass(User.class);
         verify(users).save(captor.capture());
         assertThat(captor.getValue().status()).isEqualTo(UserStatus.DELETED);
+        // tv bump is the other half of the lockout — refresh-token
+        // revocation kills future logins, tv bump kills the in-flight
+        // access token.
+        assertThat(captor.getValue().tokenVersion()).isEqualTo(1);
         verify(refreshTokens, times(1)).revokeAllForUser("u1");
     }
 

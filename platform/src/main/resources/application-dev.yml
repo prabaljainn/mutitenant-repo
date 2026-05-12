@@ -31,3 +31,10 @@ platform:
     operator:
       email: admin@orochiverse.local
       password: ChangeMe123!
+  # Dev only. Lets /admin/api/tenants/{id}/settings/{kind}/test reach
+  # localhost services (an MQTT broker you're running locally, MailHog,
+  # etc). NEVER set this in prod — it disables the SSRF guard in
+  # ConnectionTester. application-prod.yml leaves it unset (defaults
+  # to false).
+  settings:
+    allow-private-test-targets: true

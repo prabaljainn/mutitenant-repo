@@ -23,11 +23,15 @@ import com.orochiverse.platform.common.security.jwt.AccessTokenVerifier;
  * <h2>Public endpoints</h2>
  * <ul>
  *   <li>{@code /.well-known/jwks.json} — public-key distribution.</li>
- *   <li>{@code /actuator/health/**}, {@code /actuator/info},
- *       {@code /actuator/prometheus}, {@code /actuator/metrics/**} —
- *       infra/monitoring. Phase 1.10 may lock these down behind network
- *       policy; for now they're open so the dev box and Prometheus scrape
- *       work without bearer credentials.</li>
+ *   <li>{@code /actuator/health/**}, {@code /actuator/info} —
+ *       infra probes (load balancers, uptime monitors). Public.</li>
+ *   <li>{@code /actuator/prometheus}, {@code /actuator/metrics/**} —
+ *       sensitive: metrics expose login outcomes, invite counts, audit
+ *       cardinality. <b>Authenticated</b>, any user. In production the
+ *       reverse proxy should additionally block these paths from the
+ *       public ingress (defense in depth); see {@code docs/deployment.md}.
+ *       Prometheus running inside the cluster scrapes with a bearer
+ *       token issued from a dedicated operator account.</li>
  *   <li>OpenAPI / Swagger — convenience during M1 development; gate or
  *       remove in prod via Traefik later.</li>
  *   <li>{@code /api/auth/login}, {@code /api/auth/refresh},
@@ -87,7 +91,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(a -> a
                         .requestMatchers("/.well-known/jwks.json").permitAll()
                         .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
-                        .requestMatchers("/actuator/prometheus", "/actuator/metrics/**").permitAll()
+                        // Metrics endpoints fall through to `.anyRequest().authenticated()`
+                        // below — no permitAll. The reverse proxy in front of the
+                        // platform should additionally block /actuator/(prometheus|metrics)/**
+                        // from the public ingress (see docs/deployment.md).
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers(
                                 "/api/auth/login",

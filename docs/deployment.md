@@ -292,6 +292,20 @@ The `-k` skips cert validation. For genuine cert flow, you need real DNS.
 
 ---
 
+## Known limitations to revisit
+
+These are deliberate POC simplifications. Each is acceptable for a
+single-VPS deployment that hasn't onboarded its first customer yet;
+each has a clear path forward when you outgrow it.
+
+| Limitation | Why it's OK for now | Path to tighten |
+|---|---|---|
+| **Mongo app user has `readWriteAnyDatabase`** | Lets `TenantDatabaseProvisioner` create per-tenant DBs without re-granting. | Define a custom role that grants `readWrite` on a specific list of DB names. Have `provision()` extend the role's resources on each tenant create; have archive remove them. ~50 LOC, plus a follow-up Mongock migration to install the role. |
+| **`/actuator/prometheus` requires any authenticated user, not specifically OPERATOR** | Lets in-cluster Prometheus scrape with a generic service-account token. | Either tighten to `hasRole('OPERATOR')` in `SecurityConfig`, or block the path at the Traefik level (cleaner — keeps the in-cluster scrape simple). Recommended for any deploy that goes past dev. |
+| **JWT keypair rotation is "stop, regenerate, start"** | Every user re-logs in at next access-token expiry (~15 min worst case). | Issuer supports an array of keys; add a `secondary-key-path` config and a `JwksController` that publishes both. Sign with primary, accept either. Rotate by promoting secondary → primary on a deploy. |
+| **Per-instance Caffeine cache for token-version** | Single-instance compose. | When scaling horizontally, replace `TokenVersionResolver`'s Caffeine cache with a shared Redis-backed one (or accept the 30s window across instances). |
+| **Login rate limiter keyed on `(email, ip)` only** | One-IP brute force is the realistic threat for an early product. | Add a parallel per-email-only bucket (slower threshold, longer window) for "email being attacked from many IPs". |
+
 ## What this guide does NOT cover
 
 - **Horizontal scaling.** The platform is stateless — N replicas work

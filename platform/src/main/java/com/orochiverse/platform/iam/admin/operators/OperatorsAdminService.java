@@ -69,6 +69,8 @@ public class OperatorsAdminService {
     private final EmailService email;
     private final EmailProperties emailProps;
     private final AuthMetrics metrics;
+    private final org.springframework.beans.factory.ObjectProvider<
+            com.orochiverse.platform.common.security.auth.TokenVersionLookup> tvResolver;
 
     public OperatorsAdminService(UserRepository users,
                                  RefreshTokenStore refreshTokens,
@@ -76,7 +78,9 @@ public class OperatorsAdminService {
                                  AuditEntryRepository audit,
                                  EmailService email,
                                  EmailProperties emailProps,
-                                 AuthMetrics metrics) {
+                                 AuthMetrics metrics,
+                                 org.springframework.beans.factory.ObjectProvider<
+                                         com.orochiverse.platform.common.security.auth.TokenVersionLookup> tvResolver) {
         this.users = users;
         this.refreshTokens = refreshTokens;
         this.singleUseTokens = singleUseTokens;
@@ -84,6 +88,14 @@ public class OperatorsAdminService {
         this.email = email;
         this.emailProps = emailProps;
         this.metrics = metrics;
+        this.tvResolver = tvResolver;
+    }
+
+    private void invalidateTvCache(String userId) {
+        var resolver = tvResolver.getIfAvailable();
+        if (resolver != null) {
+            resolver.invalidate(userId);
+        }
     }
 
     public OperatorResponse invite(InviteOperatorRequest req, String actorUserId) {
@@ -164,16 +176,28 @@ public class OperatorsAdminService {
                     "use DELETE /admin/api/operators/{id} to soft-delete an operator");
         }
 
+        // Phase 1.10's TokenVersionLookup hook: any privilege-changing
+        // edit bumps tokenVersion so in-flight access tokens are
+        // rejected on their next request. Cosmetic edits (name) don't.
+        boolean roleChanged = req.role() != null && req.role() != existing.operatorRole();
+        boolean leftActive  = req.status() != null && req.status() != existing.status()
+                                                  && req.status() != UserStatus.ACTIVE;
+        boolean privilegeChange = roleChanged || leftActive;
+        int newTv = privilegeChange ? existing.tokenVersion() + 1 : existing.tokenVersion();
+
         var updated = new User(
                 existing.id(), existing.email(), existing.passwordHash(),
                 firstName, lastName,
                 newStatus, existing.kind(), role,
                 null, null,
-                existing.tokenVersion(), existing.lastLoginAt(),
+                newTv, existing.lastLoginAt(),
                 existing.createdAt(), Instant.now());
         var saved = users.save(updated);
+        if (privilegeChange) {
+            invalidateTvCache(id);
+        }
 
-        if (req.role() != null && req.role() != existing.operatorRole()) {
+        if (roleChanged) {
             audit.save(AuditEntry.of(AuditAction.OPERATOR_ROLE_CHANGED, actorUserId,
                     Map.of("operatorId", id, "from", existing.operatorRole().name(),
                             "to", req.role().name())));
@@ -199,9 +223,10 @@ public class OperatorsAdminService {
                 existing.firstName(), existing.lastName(),
                 UserStatus.DELETED, existing.kind(), existing.operatorRole(),
                 null, null,
-                existing.tokenVersion(), existing.lastLoginAt(),
+                existing.tokenVersion() + 1, existing.lastLoginAt(),
                 existing.createdAt(), Instant.now());
         users.save(deleted);
+        invalidateTvCache(id);
 
         refreshTokens.revokeAllForUser(id);
         singleUseTokens.revokeAllForUser(id);
