@@ -10,9 +10,15 @@
 #   PLATFORM_JWT_PUBLIC_KEY_PATH
 #   PLATFORM_JWT_KEY_ID
 #
-# We also emit a unique kid so JWKS consumers can distinguish keys when
-# you rotate. Rotation today is "regenerate + restart"; a proper hot
-# rotation (two-key window) lands when M1 grows a Phase 1.13.
+# NOTE: As of the self-bootstrapping prod compose, this script is no
+# longer required for `docker compose up -d` — the `jwt-keys-init`
+# service generates the keypair directly into the `jwt_keys` docker
+# volume on first boot, using PLATFORM_JWT_KEY_ID from .env as the kid.
+# This helper remains as a manual escape hatch for operators who want
+# to pre-seed the volume with their own keys (e.g. migrating from
+# another cluster, HSM export). See `docs/deployment.md` →
+# "Pre-seeding the JWT keypair manually" for the `docker run … cp`
+# recipe that copies these files into the volume.
 #
 # Usage:
 #   scripts/gen-jwt-keys.sh                # default output dir: ./deployment/prod/secrets/jwt

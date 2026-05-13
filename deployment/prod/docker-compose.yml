@@ -14,14 +14,14 @@
 # Bring up:
 #   cd deployment/prod
 #   cp .env.example .env       # then edit
-#   ../../scripts/gen-jwt-keys.sh
 #   docker compose pull
 #   docker compose up -d
 #
-# The Mongo rs0 internal-auth keyfile is generated automatically on
-# first boot by the `mongo-keyfile-init` service into a docker-managed
-# named volume — no pre-step required. The volume persists across
-# `down/up`, so the keyfile is stable and the replica set stays valid.
+# Both the Mongo rs0 internal-auth keyfile and the JWT signing keypair
+# are generated automatically on first boot by one-shot init services
+# (`mongo-keyfile-init`, `jwt-keys-init`) into docker-managed named
+# volumes — no pre-step, no host bind-mounts. The volumes persist
+# across `down/up`, so keys are stable; only `down -v` rotates them.
 #
 # Logs:    docker compose logs -f platform
 # Health:  curl -fsS https://${PLATFORM_HOST}/actuator/health
@@ -42,6 +42,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      jwt-keys-init:
+        condition: service_completed_successfully
     environment:
       SPRING_PROFILES_ACTIVE: prod
       # Mongo URI carries the credentials inline — no separate user/pass
@@ -67,7 +69,10 @@ services:
       # Tighten the JVM for the container memory limit set below.
       JAVA_OPTS: "-XX:MaxRAMPercentage=75 -XX:+UseZGC -XX:+ZGenerational"
     volumes:
-      - ./secrets/jwt:/run/secrets/jwt:ro
+      # JWT keypair is materialised by `jwt-keys-init` into the
+      # `jwt_keys` named volume on first boot — no host bind-mount, no
+      # manual `gen-jwt-keys.sh` step needed.
+      - jwt_keys:/run/secrets/jwt:ro
     networks: [edge, internal]
     deploy:
       resources:
@@ -82,6 +87,54 @@ services:
       - traefik.http.services.platform.loadbalancer.server.port=8080
       - traefik.http.services.platform.loadbalancer.healthcheck.path=/actuator/health
       - traefik.http.services.platform.loadbalancer.healthcheck.interval=30s
+
+  # ─────────────────────────────────────────────────────────────────────
+  # JWT keypair bootstrap — one-shot init that materialises the RSA-2048
+  # signing keypair the platform consumes at /run/secrets/jwt/. The
+  # private key is PKCS#8 ("PRIVATE KEY"), the public is X.509
+  # SubjectPublicKeyInfo ("PUBLIC KEY") — same shapes that
+  # FileRsaKeyProvider parses.
+  #
+  # The `kid` is the operator-chosen value in PLATFORM_JWT_KEY_ID (.env)
+  # — the init service writes it into kid.txt for reference and the
+  # platform reads the same env var directly, so both sides agree.
+  # Idempotent: existing keys are preserved across `down/up`; only `down
+  # -v` (volume wipe) rotates them.
+  #
+  # Mode 444 is fine inside the read-only volume mount — the platform
+  # container is the only consumer of the volume.
+  # ─────────────────────────────────────────────────────────────────────
+  jwt-keys-init:
+    image: mongo:8.0
+    user: "0:0"
+    restart: "no"
+    volumes:
+      - jwt_keys:/keys
+    environment:
+      PLATFORM_JWT_KEY_ID: ${PLATFORM_JWT_KEY_ID}
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        if [ -z "$${PLATFORM_JWT_KEY_ID:-}" ]; then
+          echo "[jwt-keys-init] ERROR: PLATFORM_JWT_KEY_ID must be set in .env (any stable identifier — e.g. prod-key-001)" >&2
+          exit 1
+        fi
+        cd /keys
+        if [ ! -s jwt-private.pem ] || [ ! -s jwt-public.pem ]; then
+          echo "[jwt-keys-init] Generating new RSA-2048 keypair"
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out jwt-private.pem 2>/dev/null
+          openssl pkey -in jwt-private.pem -pubout -out jwt-public.pem
+          echo "[jwt-keys-init] Wrote jwt-private.pem ($$(wc -c < jwt-private.pem) bytes), jwt-public.pem ($$(wc -c < jwt-public.pem) bytes)"
+        else
+          echo "[jwt-keys-init] Keypair already present; preserving content"
+        fi
+        # kid.txt always tracks the current env var (operator-chosen).
+        printf '%s' "$$PLATFORM_JWT_KEY_ID" > kid.txt
+        chmod 444 jwt-private.pem jwt-public.pem kid.txt
+        echo "[jwt-keys-init] Ready (kid=$$PLATFORM_JWT_KEY_ID)"
+    networks: [internal]
 
   # ─────────────────────────────────────────────────────────────────────
   # Mongo keyfile bootstrap — one-shot init that materialises the rs0
@@ -264,6 +317,7 @@ volumes:
   mongodb_data:
   mongodb_config:
   mongodb_keyfile:
+  jwt_keys:
   redis_data:
   traefik_acme:
 
