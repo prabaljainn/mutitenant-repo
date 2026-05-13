@@ -1,0 +1,22 @@
+# Test profile: lightweight, no infra dependencies.
+# Used by smoke tests and pure-unit tests that just need the Spring context
+# to load. Integration tests use the `integration` profile which keeps Mongo.
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.mongo.MongoDataAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.mongo.MongoRepositoriesAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+      - org.springframework.boot.autoconfigure.mail.MailSenderAutoConfiguration
+      - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+
+  # No Mongo, no Mongock.
+mongock:
+  enabled: false
+
+logging:
+  level:
+    root: WARN
+    com.orochiverse.platform: INFO

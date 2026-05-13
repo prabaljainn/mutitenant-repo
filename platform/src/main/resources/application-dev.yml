@@ -1,0 +1,40 @@
+# Local dev profile: connects to the docker-compose stack started by
+# scripts/dev-up.sh. Mongo runs as a single-node replica set rs0 without
+# auth — fine for local dev only.
+spring:
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/iam_db?replicaSet=rs0&directConnection=true
+    redis:
+      host: localhost
+      port: 6379
+  mail:
+    host: localhost
+    port: 1025  # Mailhog
+
+logging:
+  level:
+    org.springframework.web: INFO
+    org.mongodb.driver: WARN
+
+# Dev-only auto-bootstrap of an OPERATOR_ADMIN so a fresh `dev-up.sh +
+# run-app.sh` is immediately usable from Postman / Swagger / curl. The
+# BootstrapOperatorRunner only seeds when no operator exists in iam_db,
+# so this is safe to leave on indefinitely — no duplicates after the
+# first boot.
+#
+# DO NOT use these credentials anywhere reachable from the network. The
+# prod profile leaves these unset; production must inject real ones via
+# PLATFORM_BOOTSTRAP_OPERATOR_EMAIL / PLATFORM_BOOTSTRAP_OPERATOR_PASSWORD.
+platform:
+  bootstrap:
+    operator:
+      email: admin@orochiverse.local
+      password: ChangeMe123!
+  # Dev only. Lets /admin/api/tenants/{id}/settings/{kind}/test reach
+  # localhost services (an MQTT broker you're running locally, MailHog,
+  # etc). NEVER set this in prod — it disables the SSRF guard in
+  # ConnectionTester. application-prod.yml leaves it unset (defaults
+  # to false).
+  settings:
+    allow-private-test-targets: true

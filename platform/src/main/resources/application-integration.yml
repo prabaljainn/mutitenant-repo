@@ -1,0 +1,23 @@
+# Profile used by integration tests against the local dev Mongo stack
+# (started by scripts/dev-up.sh). Mongo URI is set per-test via
+# @DynamicPropertySource so each test can target its own DB name without
+# stomping on data.
+spring:
+  autoconfigure:
+    exclude:
+      # Mongo IS enabled here. Redis stays excluded.
+      # Mail IS enabled and points at MailHog (1025) so Phase 1.9
+      # invite/reset emails can be verified end-to-end via MailHog's
+      # REST API at :8025.
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+      - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  mail:
+    host: localhost
+    port: 1025
+
+logging:
+  level:
+    root: WARN
+    com.orochiverse.platform: INFO
+    org.mongodb.driver: WARN

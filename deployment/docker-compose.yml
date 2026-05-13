@@ -1,38 +1,104 @@
+# Local development stack for the Orochiverse multi-tenant platform.
+#
+# Starts MongoDB 8.0 LTS (single-node replica set, required for transactions),
+# Redis, and Mailhog. Optional Traefik can be enabled with `--profile proxy`.
+#
+# Usage:
+#   ./scripts/dev-up.sh                 # start essentials
+#   ./scripts/dev-up.sh --profile proxy # also start Traefik
+#   ./scripts/dev-down.sh               # stop everything (keeps volumes)
+#   ./scripts/dev-reset.sh              # stop AND wipe volumes
+#
+# Mongo 8.0 LTS is the default. Override via MONGO_VERSION in .env if you
+# need a rapid-release line (e.g., MONGO_VERSION=8.3) — at the cost of a
+# shorter support window.
+
+name: orochiverse-platform
+
 services:
-  # ─────────────────────────────────────────────
-  # MongoDB — Primary Database
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────
+  # MongoDB 8.0 LTS — single-node replica set (rs0)
+  # Replica-set mode is required for multi-document transactions used
+  # by tenant onboarding flows in Phase 1.7+.
+  # ─────────────────────────────────────────────────────────────────────
   mongodb:
-    image: mongo:7.0
-    container_name: mt-mongodb
+    image: mongo:${MONGO_VERSION:-8.0}
+    container_name: orochiverse-mongodb
     restart: unless-stopped
     ports:
       - "${MONGO_PORT:-27017}:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-root}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-rootpassword}
-      MONGO_INITDB_DATABASE: ${MONGO_DB_NAME:-multitenant_platform}
+    command:
+      - mongod
+      - --replSet=rs0
+      - --bind_ip_all
+      - --port=27017
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
-      - ./mongodb/init-scripts:/docker-entrypoint-initdb.d:ro
-      - ./mongodb/mongod.conf:/etc/mongod.conf:ro
-    command: ["mongod", "--config", "/etc/mongod.conf"]
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - "db.adminCommand({ ping: 1 }).ok"
+      interval: 5s
       timeout: 5s
-      retries: 5
-      start_period: 30s
-    networks:
-      - platform-network
+      retries: 30
+      start_period: 5s
+    networks: [platform-network]
 
-  # ─────────────────────────────────────────────
-  # Redis — Cache, Sessions, Token Store
-  # ─────────────────────────────────────────────
+  # One-shot: initiates the replica set on first startup, idempotent.
+  # Exits 0 once rs0 is healthy. Spring Boot connects via the rs0
+  # connection string only after this runs.
+  mongo-init:
+    image: mongo:${MONGO_VERSION:-8.0}
+    container_name: orochiverse-mongo-init
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: "no"
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        echo "Checking replica set state on mongodb:27017..."
+        mongosh --quiet --host mongodb:27017 --eval '
+          try {
+            const s = rs.status();
+            print("Replica set already initialized: " + s.set + " (" + s.myState + ")");
+          } catch (e) {
+            if (e.codeName === "NotYetInitialized") {
+              print("Initializing rs0...");
+              rs.initiate({
+                _id: "rs0",
+                members: [{ _id: 0, host: "mongodb:27017", priority: 1 }]
+              });
+              print("Waiting for PRIMARY...");
+              while (true) {
+                try {
+                  if (db.hello().isWritablePrimary) {
+                    print("rs0 is PRIMARY.");
+                    break;
+                  }
+                } catch (_) {}
+                sleep(500);
+              }
+            } else {
+              throw e;
+            }
+          }
+        '
+        echo "Replica set OK."
+    networks: [platform-network]
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Redis 7 — refresh tokens, login rate limits, JWT denylist
+  # ─────────────────────────────────────────────────────────────────────
   redis:
-    image: redis:7.2-alpine
-    container_name: mt-redis
+    image: redis:${REDIS_VERSION:-7.4-alpine}
+    container_name: orochiverse-redis
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6379}:6379"
@@ -42,52 +108,48 @@ services:
       - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - platform-network
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [platform-network]
 
-  # ─────────────────────────────────────────────
-  # Traefik — Reverse Proxy / Gateway
-  # ─────────────────────────────────────────────
-  traefik:
-    image: traefik:v3.0
-    container_name: mt-traefik
+  # ─────────────────────────────────────────────────────────────────────
+  # Mailhog — captures invite/reset emails locally; UI on :8025
+  # ─────────────────────────────────────────────────────────────────────
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: orochiverse-mailhog
     restart: unless-stopped
     ports:
-      - "80:80"        # HTTP
-      - "443:443"      # HTTPS
-      - "8080:8080"    # Dashboard (dev only)
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"
+      - "${MAILHOG_UI_PORT:-8025}:8025"
+    networks: [platform-network]
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Traefik — opt-in via `--profile proxy` (not used during local dev
+  # unless you explicitly want to test routing/SSL termination).
+  # ─────────────────────────────────────────────────────────────────────
+  traefik:
+    image: traefik:v3.1
+    container_name: orochiverse-traefik
+    restart: unless-stopped
+    profiles: ["proxy"]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "${TRAEFIK_DASHBOARD_PORT:-8090}:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./traefik/dynamic:/etc/traefik/dynamic:ro
-    networks:
-      - platform-network
-
-  # ─────────────────────────────────────────────
-  # Mailhog — Dev Email Testing
-  # ─────────────────────────────────────────────
-  mailhog:
-    image: mailhog/mailhog:latest
-    container_name: mt-mailhog
-    restart: unless-stopped
-    ports:
-      - "${MAILHOG_SMTP_PORT:-1025}:1025"    # SMTP
-      - "${MAILHOG_UI_PORT:-8025}:8025"      # Web UI
-    networks:
-      - platform-network
+    networks: [platform-network]
 
 volumes:
   mongodb_data:
-    driver: local
   mongodb_config:
-    driver: local
   redis_data:
-    driver: local
 
 networks:
   platform-network:
     driver: bridge
-    name: mt-platform-network
+    name: orochiverse-platform-network

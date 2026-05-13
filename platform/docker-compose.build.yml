@@ -1,0 +1,23 @@
+# docker-compose harness for building + testing without local Java.
+#
+# Usage:
+#   docker compose -f docker-compose.build.yml build test
+#   docker compose -f docker-compose.build.yml run --rm test
+#
+# This drives the multi-stage Dockerfile up to the `build` target, which
+# runs `./mvnw verify` (compiles + runs the test suite).
+
+services:
+  test:
+    build:
+      context: .
+      target: build
+      dockerfile: Dockerfile
+    image: orochiverse/platform-build:dev
+    command: ["./mvnw", "-B", "-ntp", "verify"]
+    volumes:
+      # Cache Maven repo across runs to avoid re-downloading dependencies.
+      - maven-cache:/root/.m2
+
+volumes:
+  maven-cache:

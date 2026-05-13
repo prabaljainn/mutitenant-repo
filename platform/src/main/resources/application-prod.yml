@@ -1,0 +1,46 @@
+# Production profile reads everything from environment variables.
+# No secrets in the repo.
+spring:
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:?MONGODB_URI must be set in production}
+  redis:
+    url: ${REDIS_URL:?REDIS_URL must be set in production}
+  mail:
+    host: ${SMTP_HOST:?SMTP_HOST must be set in production}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:?SMTP_USERNAME must be set in production}
+    password: ${SMTP_PASSWORD:?SMTP_PASSWORD must be set in production}
+    properties:
+      mail:
+        smtp:
+          starttls:
+            enable: true
+
+server:
+  forward-headers-strategy: framework
+
+management:
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    root: INFO
+    com.orochiverse.platform: INFO
+
+# Phase 1.5: JWT keys MUST be loaded from disk in production. Failing fast
+# here is the point — we never want to mint tokens with an ephemeral key
+# in prod and then have nothing else trust them.
+platform:
+  security:
+    jwt:
+      issuer: ${PLATFORM_JWT_ISSUER:?PLATFORM_JWT_ISSUER must be set in production}
+      private-key-path: ${PLATFORM_JWT_PRIVATE_KEY_PATH:?PLATFORM_JWT_PRIVATE_KEY_PATH must be set in production}
+      public-key-path: ${PLATFORM_JWT_PUBLIC_KEY_PATH:?PLATFORM_JWT_PUBLIC_KEY_PATH must be set in production}
+      key-id: ${PLATFORM_JWT_KEY_ID:?PLATFORM_JWT_KEY_ID must be set in production}
+  email:
+    from: ${PLATFORM_EMAIL_FROM:?PLATFORM_EMAIL_FROM must be set in production}
+    reply-to: ${PLATFORM_EMAIL_REPLY_TO:}
+    base-url: ${PLATFORM_EMAIL_BASE_URL:?PLATFORM_EMAIL_BASE_URL must be set in production}

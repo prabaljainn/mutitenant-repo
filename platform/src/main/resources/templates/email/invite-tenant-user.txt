@@ -1,0 +1,15 @@
+Hi [(${firstName})],
+
+You've been invited to [(${tenantName})] on the Orochiverse platform with
+the [(${role})] role.
+
+Set a password and activate your account:
+
+  [(${acceptUrl})]
+
+This invite expires on [(${expiresAt})].
+
+If you didn't expect this email, you can safely ignore it. No account
+is active until the link above is used.
+
+-- Orochiverse Platform

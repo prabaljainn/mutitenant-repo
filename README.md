@@ -57,6 +57,7 @@ docker compose ps
 
 | Document | Description |
 |----------|-------------|
+| [Deployment](docs/deployment.md) | VPS + docker-compose + GHCR image pipeline, end-to-end. |
 | [System Overview](docs/architecture/01-system-overview.md) | High-level architecture, tech stack, module breakdown |
 | [Multi-Tenancy Design](docs/architecture/02-multitenancy-design.md) | Tenancy strategy, data model, user-across-tenants |
 | [Authentication Design](docs/architecture/03-authentication-design.md) | JWT auth, RBAC, password reset, security measures |

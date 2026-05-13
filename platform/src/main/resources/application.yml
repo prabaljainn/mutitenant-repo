@@ -1,0 +1,92 @@
+spring:
+  application:
+    name: platform
+  threads:
+    virtual:
+      enabled: true
+  profiles:
+    default: dev
+  # We never use Spring Security's default in-memory user (the one that logs
+  # "Using generated security password: ..."). All auth is JWT-based; see
+  # common/security/SecurityConfig.java. Excluding UserDetailsServiceAutoConfiguration
+  # keeps the startup logs clean and removes a dev-only credential surface.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  data:
+    mongodb:
+      # Indexes are managed by Mongock changesets in Phase 1.4+, never by
+      # Spring Data's auto-index-creation (which can't track migrations).
+      auto-index-creation: false
+      # Connection URI is profile-specific:
+      #   dev         → application-dev.yml
+      #   integration → set per-test via @DynamicPropertySource
+      #   prod        → MONGODB_URI env var (application-prod.yml)
+      #   test        → not set (Mongo autoconfig is excluded)
+
+server:
+  port: 8080
+  shutdown: graceful
+  forward-headers-strategy: framework
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    root: INFO
+    com.orochiverse.platform: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-},%X{userId:-},%X{tenantId:-}] %logger{36} - %msg%n"
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+# Mongock: schema migrations for iam_db, executed at startup.
+# Per-tenant DB indexes are NOT managed here — they're created imperatively
+# from TenantDatabaseProvisioner.provision(), so they can run against each
+# tenant DB as it's created.
+mongock:
+  enabled: true
+  runner-type: initializingbean
+  transactional: false
+  migration-scan-package:
+    - com.orochiverse.platform.common.migrations.iam
+
+# Phase 1.5: JWT signing + JWKS.
+#
+# - issuer:           goes into the `iss` claim and is enforced by the verifier.
+# - access-token-ttl: 15 minutes per spec §5.1.
+# - clock-skew:       tolerance applied to `iat`/`exp` checks (network drift).
+# - private/public-key-path + key-id: when `private-key-path` is unset the
+#   EphemeralRsaKeyProvider generates a fresh keypair on startup (dev/test).
+#   Production sets these via env vars in application-prod.yml.
+#
+# Phase 1.9: email.
+# - from / reply-to: addresses for outgoing platform email.
+# - base-url: where invite/reset links in those emails point. Distinct from
+#   spring.mail.host (the SMTP server hostname).
+platform:
+  security:
+    jwt:
+      issuer: https://iam.orochiverse.com
+      access-token-ttl: PT15M
+      clock-skew: PT30S
+  email:
+    from: noreply@orochiverse.local
+    reply-to: support@orochiverse.local
+    base-url: http://localhost:8080
