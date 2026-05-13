@@ -4,9 +4,17 @@
 # uses it to authorise its own arbiter+secondary chatter (even when
 # you only have a single PRIMARY).
 #
-# Spec: 6–1024 base64-ish characters. We generate 512 bytes of entropy
-# and base64 it. Mode 400, owned by the container's mongod uid (we
-# chmod 400 here; docker bind-mounts preserve the perms).
+# Spec: 6–1024 base64-ish characters. We generate 756 bytes of entropy
+# and base64 it. Mode 400.
+#
+# NOTE: As of the self-bootstrapping prod compose, this script is no
+# longer required for `docker compose up -d` — the `mongo-keyfile-init`
+# service generates the keyfile directly into the `mongodb_keyfile`
+# docker volume on first boot. This helper remains as a manual escape
+# hatch for operators who want to pre-seed the volume with their own
+# keyfile (e.g. lifting one from an existing cluster). See
+# `docs/deployment.md` → "Pre-seeding the Mongo keyfile manually" for
+# the `docker run … cp` recipe that copies this file into the volume.
 #
 # Usage:
 #   scripts/gen-mongo-keyfile.sh                              # default dest

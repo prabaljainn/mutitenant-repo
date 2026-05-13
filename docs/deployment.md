@@ -58,15 +58,17 @@ unreachable from the host's public interface.
 git clone https://github.com/<owner>/<repo>.git
 cd <repo>
 
-# 2. Prepare secrets — three things, three commands.
+# 2. Prepare secrets — two things, two commands.
 cp deployment/prod/.env.example deployment/prod/.env
 $EDITOR deployment/prod/.env                                # fill every value
 ./scripts/gen-jwt-keys.sh                                    # writes deployment/prod/secrets/jwt/
-./scripts/gen-mongo-keyfile.sh                               # writes deployment/prod/secrets/mongo/keyfile
 
 # 3. Copy the kid the keygen printed into .env (PLATFORM_JWT_KEY_ID).
 
-# 4. Bring the stack up.
+# 4. Bring the stack up. The Mongo rs0 internal-auth keyfile is
+#    generated automatically on first boot into a docker-managed
+#    volume by the `mongo-keyfile-init` one-shot service — no manual
+#    step needed.
 cd deployment/prod
 docker compose pull
 docker compose up -d
@@ -136,11 +138,20 @@ docker compose pull platform && docker compose up -d platform
 | `deployment/prod/secrets/jwt/jwt-private.pem` | `scripts/gen-jwt-keys.sh` | 600 | Access-token signing |
 | `deployment/prod/secrets/jwt/jwt-public.pem` | same | 644 | Token verification (published via JWKS) |
 | `deployment/prod/secrets/jwt/kid.txt` | same | 644 | The `kid` to set in `.env` |
-| `deployment/prod/secrets/mongo/keyfile` | `scripts/gen-mongo-keyfile.sh` | 400 | rs0 internal cluster auth |
+| docker volume `mongodb_keyfile` (file `keyfile`) | `mongo-keyfile-init` service, first boot | uid 999, mode 400 | rs0 internal cluster auth |
 
 `deployment/prod/.gitignore` excludes `.env` and the `secrets/` tree.
 Double-check `git status` before pushing — leaking the JWT private key
 means anyone can mint valid access tokens for any user.
+
+The Mongo keyfile is intentionally **not** a file in `secrets/` — it
+lives in a docker-managed named volume so `docker compose up -d` works
+from a clean checkout without a pre-step. The volume persists across
+`down/up`; rotation only happens on `down -v` (which also wipes
+mongodb_data, so the new keyfile pairs with a fresh replica set).
+`scripts/gen-mongo-keyfile.sh` is preserved as a manual escape hatch
+for operators who want to pre-seed the volume themselves — see
+[Pre-seeding the Mongo keyfile manually](#pre-seeding-the-mongo-keyfile-manually).
 
 ### Volumes (persistent)
 
@@ -258,6 +269,34 @@ gunzip -c backup-2026-05-12.archive.gz | docker compose exec -T mongodb mongores
 | `SMTP_*` | `.env` + restart platform. |
 | `BOOTSTRAP_OPERATOR_PASSWORD` | Once a real operator exists, unset and restart — the runner no-ops thereafter. |
 | `JWT private key` | Hot rotation isn't supported yet (single-key only). For now: shut down, regenerate, restart — every user gets logged out as old tokens fail verification. |
+
+### Pre-seeding the Mongo keyfile manually
+
+The default flow generates the keyfile inside docker on first boot.
+If you instead want to provide your own (e.g. lifting a keyfile from an
+existing cluster, or pre-baking entropy from your own RNG), generate it
+locally and copy it into the `mongodb_keyfile` volume **before** the
+first `docker compose up -d`:
+
+```bash
+# 1. Generate the file on the host.
+./scripts/gen-mongo-keyfile.sh                                  # writes ./deployment/prod/secrets/mongo/keyfile (mode 400)
+
+# 2. Create the named volume and stage the file into it.
+cd deployment/prod
+docker volume create orochiverse-prod_mongodb_keyfile
+docker run --rm -v orochiverse-prod_mongodb_keyfile:/k \
+  -v "$(pwd)/secrets/mongo/keyfile:/src:ro" \
+  mongo:8.0 bash -c \
+    'cp /src /k/keyfile && chmod 400 /k/keyfile && chown 999:999 /k/keyfile'
+
+# 3. Bring the stack up — `mongo-keyfile-init` will see the file already
+#    exists, leave the content alone, and only re-assert perms.
+docker compose up -d
+```
+
+This is the only situation where running `gen-mongo-keyfile.sh` by hand
+matters; for fresh deployments, doing nothing is correct.
 
 ### TLS cert troubleshooting
 

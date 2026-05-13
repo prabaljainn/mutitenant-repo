@@ -47,7 +47,7 @@ The full prod compose — Traefik v3 with Let's Encrypt (TLS-ALPN-01), Mongo 8 w
 | `redis` | `--requirepass ${REDIS_PASSWORD}`. | `REDIS_PASSWORD`. |
 | `platform` | The app image from GHCR. JWT key files mounted from `deployment/prod/secrets/jwt/`. | JWT RS256. |
 
-`deployment/prod/.env` is the single secret file the operator fills in (template at `.env.example`). Keys are generated locally with `scripts/gen-jwt-keys.sh` and `scripts/gen-mongo-keyfile.sh` — neither command commits anything to the repo.
+`deployment/prod/.env` is the single secret file the operator fills in (template at `.env.example`). JWT keys are generated locally with `scripts/gen-jwt-keys.sh`; the Mongo rs0 keyfile is materialised automatically on first boot by the `mongo-keyfile-init` one-shot service into a docker-managed volume, so `docker compose up -d` works from a clean checkout with no pre-step. `scripts/gen-mongo-keyfile.sh` is kept as a manual escape hatch — see `docs/deployment.md`.
 
 ---
 

@@ -18,6 +18,11 @@
 #   docker compose pull
 #   docker compose up -d
 #
+# The Mongo rs0 internal-auth keyfile is generated automatically on
+# first boot by the `mongo-keyfile-init` service into a docker-managed
+# named volume — no pre-step required. The volume persists across
+# `down/up`, so the keyfile is stable and the replica set stays valid.
+#
 # Logs:    docker compose logs -f platform
 # Health:  curl -fsS https://${PLATFORM_HOST}/actuator/health
 
@@ -79,14 +84,55 @@ services:
       - traefik.http.services.platform.loadbalancer.healthcheck.interval=30s
 
   # ─────────────────────────────────────────────────────────────────────
+  # Mongo keyfile bootstrap — one-shot init that materialises the rs0
+  # internal-auth keyfile inside a docker-managed volume so the stack is
+  # self-bootstrapping from a clean checkout. Idempotent: if the volume
+  # already contains a keyfile, the content is left alone and only the
+  # owner/mode are re-asserted. Runs as root so it can chown the file to
+  # mongod's in-container uid (999).
+  # ─────────────────────────────────────────────────────────────────────
+  mongo-keyfile-init:
+    image: mongo:8.0
+    user: "0:0"
+    restart: "no"
+    volumes:
+      - mongodb_keyfile:/keyfile
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        KEYFILE=/keyfile/keyfile
+        if [ ! -s "$$KEYFILE" ]; then
+          echo "[mongo-keyfile-init] Generating new rs0 keyfile"
+          openssl rand -base64 756 > "$$KEYFILE"
+          echo "[mongo-keyfile-init] Wrote $$(wc -c < "$$KEYFILE") bytes"
+        else
+          echo "[mongo-keyfile-init] Keyfile already present; preserving content"
+        fi
+        chmod 400 "$$KEYFILE"
+        chown 999:999 "$$KEYFILE"
+        echo "[mongo-keyfile-init] Ready ($$(stat -c '%a %u:%g' "$$KEYFILE"))"
+    networks: [internal]
+
+  # ─────────────────────────────────────────────────────────────────────
   # MongoDB 8.0 LTS, rs0, auth enabled. The init container creates the
   # app user with the minimum privileges Spring Data + Mongock need:
   # readWrite on iam_db and any tenant_*_db (so the provisioner can
   # create per-tenant databases on demand).
+  #
+  # The rs0 internal-auth keyfile is materialised by `mongo-keyfile-init`
+  # into the `mongodb_keyfile` named volume and mounted read-only here at
+  # /etc/mongo so the file lives at /etc/mongo/keyfile. The volume
+  # persists across `docker compose down/up`, so the keyfile is stable
+  # and the replica set stays valid.
   # ─────────────────────────────────────────────────────────────────────
   mongodb:
     image: mongo:8.0
     restart: unless-stopped
+    depends_on:
+      mongo-keyfile-init:
+        condition: service_completed_successfully
     command:
       - mongod
       - --replSet=rs0
@@ -99,7 +145,7 @@ services:
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
-      - ./secrets/mongo/keyfile:/etc/mongo/keyfile:ro
+      - mongodb_keyfile:/etc/mongo:ro
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "-u", "${MONGO_ROOT_USERNAME}", "-p", "${MONGO_ROOT_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand({ ping: 1 }).ok"]
       interval: 10s
@@ -207,6 +253,7 @@ services:
 volumes:
   mongodb_data:
   mongodb_config:
+  mongodb_keyfile:
   redis_data:
   traefik_acme:
 

@@ -163,10 +163,15 @@ Keys are generated locally:
 
 ```bash
 ./scripts/gen-jwt-keys.sh         # writes deployment/prod/secrets/jwt/{private,public}.pem
-./scripts/gen-mongo-keyfile.sh    # writes deployment/prod/secrets/mongo/keyfile (mode 400)
 ```
 
-Neither script commits anything to the repo — secrets live only on the deploy host.
+The script commits nothing to the repo — secrets live only on the deploy host.
+
+The Mongo rs0 internal-auth keyfile is generated automatically on first
+boot by the `mongo-keyfile-init` service into the `mongodb_keyfile`
+docker volume — no manual command required. The `scripts/gen-mongo-keyfile.sh`
+helper still exists as a manual escape hatch; see
+`docs/deployment.md` → *Pre-seeding the Mongo keyfile manually*.
 
 ---
 
