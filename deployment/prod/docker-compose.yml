@@ -232,6 +232,14 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      # Pin the docker-SDK API version traefik uses to talk to dockerd.
+      # Modern dockerd (Engine 25+) sets MinAPIVersion=1.40, and traefik's
+      # bundled docker client falls back to 1.24 when negotiation doesn't
+      # land — the daemon then rejects every poll with "client version 1.24
+      # is too old". 1.43 is Docker 24.0's API and sits comfortably inside
+      # both traefik's SDK support window and any current Engine release.
+      DOCKER_API_VERSION: "1.43"
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
