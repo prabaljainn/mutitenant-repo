@@ -4,8 +4,8 @@ spring:
   data:
     mongodb:
       uri: ${MONGODB_URI:?MONGODB_URI must be set in production}
-  redis:
-    url: ${REDIS_URL:?REDIS_URL must be set in production}
+    redis:
+      url: ${REDIS_URL:?REDIS_URL must be set in production}
   mail:
     host: ${SMTP_HOST:?SMTP_HOST must be set in production}
     port: ${SMTP_PORT:587}
