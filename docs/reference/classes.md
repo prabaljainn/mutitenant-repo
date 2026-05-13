@@ -1,202 +1,345 @@
 # Class reference
 
-Every production class in `platform/src/main/java`, organized by package. Each entry: one-line role, key methods/fields, and "see also" pointers when behavior is split across files.
+Every production class in `platform/src/main/java`, organized by package.
+Each entry: one-line role, key methods/fields, and "see also" pointers when
+behavior is split across files.
 
-Source counts: **47 production classes** across `common`, `iam`, and the application root.
+Source counts: **~109 production classes** across `common`, `iam`, and the
+application root.
 
 ---
 
 ## `com.orochiverse.platform`
 
 ### `PlatformApplication`
-Spring Boot entry point. `@SpringBootApplication @EnableMongock`. Single `main(args)` delegates to `SpringApplication.run`. Only the entry point lives here — feature code lives in modules.
+Spring Boot entry point. `@SpringBootApplication @EnableMongock`. Single
+`main(args)` delegates to `SpringApplication.run`.
 
 ---
 
 ## `common.audit/` — append-only audit log
 
 ### `AuditAction` (enum)
-Enumerates every action that gets recorded: `LOGIN_SUCCESS`, `LOGIN_FAILED`, `TENANT_CREATED`, `TENANT_DELETED`, `OPERATOR_ASSIGNED`, `OPERATOR_REVOKED`, `USER_INVITED`, `PASSWORD_CHANGED`, `TENANT_SWITCHED`, etc. Adding an action here is the first step in instrumenting a new flow.
+Every action that gets recorded — `LOGIN_SUCCESS`, `LOGIN_FAILURE`,
+`PASSWORD_RESET_REQUESTED/COMPLETED`, `PASSWORD_CHANGED`, `TENANT_CREATED/
+UPDATED/ARCHIVED`, `TENANT_DB_PROVISIONED/DEPROVISIONED`, `OPERATOR_INVITED/
+ROLE_CHANGED/SUSPENDED/DELETED`, `OPERATOR_ASSIGNMENT_GRANTED/REVOKED`,
+`TENANT_USER_INVITED/ROLE_CHANGED/SUSPENDED/DELETED`,
+`TENANT_SETTING_UPDATED/DELETED/TESTED`, `TENANT_SWITCHED`, `TOKEN_REVOKED`.
+Adding an action is step 1 of instrumenting a new flow.
 
 ### `AuditEntry` (record, `@Document("audit_log")`)
-One row per recorded action. Fields: `id`, `action`, `actorUserId`, `tenantId` (nullable for cross-tenant ops), `timestamp`, `details` (free-form `Map<String,Object>`). Static factory `AuditEntry.of(action, actorUserId)` for the common case.
+One row per recorded action. Fields: `id`, `timestamp`, `actorUserId`,
+`action`, `targetUserId`, `targetEntityId`, `tenantId`, `metadata`,
+`actorIp`, `userAgent`. Static factory `AuditEntry.of(action, actorUserId, metadata)`.
 
-### `AuditEntryRepository` (Spring Data)
-Reads and appends to `iam_db.audit_log`. Methods: `findAllByActorUserIdOrderByTimestampDesc(userId, Pageable)`, `findAllByTenantIdOrderByTimestampDesc(tenantId, Pageable)`. Append-only by convention; nothing in the codebase calls `delete*`.
+### `AuditEntryRepository` (Spring Data, `@IamScoped`)
+Reads + appends `iam_db.audit_log`. Methods include
+`findAllByActorUserIdOrderByTimestampDesc(userId, Pageable)`,
+`findAllByTenantIdOrderByTimestampDesc(tenantId, Pageable)`. TTL'd at 90
+days by index on `timestamp`.
 
 ---
 
 ## `common.data/` — marker annotations
 
 ### `@IamScoped`
-Tag annotation for repositories/services that read/write `iam_db`. Documentation only — has no runtime behavior. Lets `RepositoryDisciplineTest` reason about intent.
+Documentation-only tag for repositories/services that touch `iam_db`.
 
 ### `@TenantScoped`
-Counterpart to `@IamScoped`. Marks code that operates on per-tenant DBs through `TenantMongoTemplateRegistry.forCurrentTenant()`. Anything in `tenant.*` or `gcs.*` should carry this annotation.
+Counterpart — marks code that operates on per-tenant DBs through
+`TenantMongoTemplateRegistry.forCurrentTenant()`.
+
+---
+
+## `common.email/` — outbound mail (Phase 1.9)
+
+### `EmailProperties` (record, `@ConfigurationProperties("platform.email")`)
+`from`, `replyTo`, `baseUrl`. The `baseUrl` is what gets baked into invite
+and reset links — distinct from `spring.mail.host` (the SMTP server).
+
+### `EmailService` (interface)
+`send(to, subject, templateName, model)` — single entry point. One
+implementation today (`SmtpEmailService`), drop-in replaceable.
+
+### `SmtpEmailService`
+Synchronous SMTP via Spring Mail. Renders the named Thymeleaf template
+(TEXT mode) with the model, sends. Logs to/subject on success; throws on
+SMTP failure (callers don't roll back user-creation on email failure).
+
+### `TextTemplateEngine` config
+Qualifier-named `emailTemplateEngine` to avoid clashing with the HTML
+auto-config. Templates in `src/main/resources/templates/email/*.txt`.
 
 ---
 
 ## `common.migrations.iam/` — Mongock changesets for `iam_db`
 
 ### `IamBaselineIndexes`
-`@ChangeUnit(id="iam-baseline-indexes-001", order="001")`. Runs at startup via `@EnableMongock` on `PlatformApplication`. Creates every index on `iam_db.users`, `iam_db.tenants`, `iam_db.operator_assignments`, and `iam_db.audit_log` — including the TTL on `audit_log.timestamp` for 1-year retention.
+`@ChangeUnit(id="iam-baseline-indexes-001", order="001")`. Runs at startup.
+Creates every index on `iam_db.users`, `iam_db.tenants`,
+`iam_db.operator_assignments`, `iam_db.audit_log`, including the
+`audit_log.timestamp` TTL.
 
-To add a new collection or index, write a new `@ChangeUnit` class with a higher `order` value. Editing this class will not re-run; Mongock tracks changesets by ID.
+To add a new index, write a new `@ChangeUnit` with a higher `order` —
+editing this class doesn't re-run; Mongock tracks by ID.
+
+---
+
+## `common.observability/` — request context + metrics (Phase 1.10)
+
+### `RequestIdMdcFilter`
+`@Order(HIGHEST_PRECEDENCE+10)` — runs before any auth filter. Reads or
+generates an `X-Request-Id` (16-char), populates the `requestId` MDC slot,
+echoes it back as a response header, clears MDC in `finally`. Renamed from
+`RequestContextFilter` to avoid a Spring bean-name collision.
+
+### `AuthMetrics`
+Micrometer counters, pre-registered with every tag combination so
+Prometheus scrapes see zero before the first request:
+- `platform_login_attempts_total{outcome=success|failure|rate_limited}`
+- `platform_invite_emails_total{kind=operator|tenant_user}`
+- `platform_password_resets_total{stage=requested|completed}`
+- `platform_token_version_check_failures_total`
+
+---
+
+## `common.openapi/`
+
+### `OpenApiConfig`
+Wires the bearer-auth security scheme into the generated OpenAPI doc so
+Swagger UI shows the "Authorize" button. Global `SecurityRequirement` since
+most of the surface is authenticated.
 
 ---
 
 ## `common.tenant/` — tenant context + per-tenant Mongo plumbing
 
-The package that makes "developers write single-tenant code" possible. Read these in order if you're new: `TenantId` → `TenantContext` → `TenantMongoTemplateRegistry` → `TenantDatabaseProvisioner`.
+Read in order: `TenantId` → `TenantContext` → `TenantMongoTemplateRegistry`
+→ `TenantDatabaseProvisioner`.
 
 ### `TenantId`
-Immutable utility for the tenant-ID format (`^[a-z0-9][a-z0-9_-]{0,49}$`). Methods: `requireValid(id)` returns the id if valid (throws `IllegalArgumentException` otherwise); `dbName(id)` returns `tenant_<id>_db`. Used everywhere a tenant ID enters the system.
+Immutable utility for the tenant-ID format (`^[a-z0-9][a-z0-9_-]{0,49}$`).
+`requireValid(id)` and `dbName(id)` (returns `tenant_<id>_db`).
 
 ### `MissingTenantContextException`
-Thrown by `TenantContext.requireCurrent()` when no tenant is bound. Means a tenant-scoped piece of code ran outside a tenant scope — almost always a routing/wiring bug.
+Thrown by `TenantContext.requireCurrent()` when no tenant is bound.
 
 ### `TenantContext`
-Carries the active tenant ID for a unit of work using a Java 25 `ScopedValue`. Public surface: `runIn(tid, Runnable)`, `callIn(tid, CallableOp)`, `requireCurrent()`, `current()` (Optional), `isBound()`. **Why ScopedValue not ThreadLocal**: see the class javadoc — auto-cleanup, immutable inside scope, designed for virtual threads.
+Java 25 `ScopedValue` carrying the active tenant ID for a unit of work.
+Public surface: `runIn(tid, Runnable)`, `callIn(tid, CallableOp)`,
+`requireCurrent()`, `current()` (Optional), `isBound()`. Auto-cleanup +
+virtual-thread-friendly is the point.
 
 ### `TenantMongoTemplateRegistry`
-Caches one `MongoTemplate` per tenant DB; all share one underlying `MongoClient` connection pool. Methods: `forCurrentTenant()` (resolves through `TenantContext`), `forTenant(id)`, `evictTenant(id)`. **This is the only class in `tenant.*` / `gcs.*` should ever use to talk to Mongo** — `RepositoryDisciplineTest` enforces it.
+Caches one `MongoTemplate` per tenant DB; all share one `MongoClient`
+connection pool. `forCurrentTenant()` resolves through `TenantContext`.
+**Only class in `tenant.*`/`gcs.*` permitted to talk to Mongo** —
+enforced by `RepositoryDisciplineTest`.
 
 ### `TenantDatabaseProvisioner`
-Explicit per-tenant DB lifecycle. `provision(tenantId)` writes a `_provisioning_marker` doc (so the DB exists; Mongo creates DBs lazily on first write) and creates per-tenant indexes. `deprovision(tenantId)` drops the DB and evicts the cached template. Called from the operator-admin tenant-CRUD APIs (Phase 1.7).
+Explicit per-tenant DB lifecycle. `provision(tenantId)` writes a marker
+doc + creates per-tenant indexes; `deprovision(tenantId)` drops the DB +
+evicts the cache. Called from `TenantsAdminService.create/softDelete`.
 
 ### `TenantMongoConfig`
-`@Configuration` that wires the `MongoClient` and `TenantMongoTemplateRegistry`. Guarded by `@ConditionalOnProperty(prefix="spring.data.mongodb", name="uri")` so it stays inert under the `test` profile (which excludes Mongo autoconfig).
+`@Configuration` wiring the `MongoClient` and `TenantMongoTemplateRegistry`.
+`@ConditionalOnProperty(prefix="spring.data.mongodb", name="uri")` so it
+stays inert under the `test` profile.
 
 ---
 
-## `common.security/` — auth/identity stack (Phases 1.5 + 1.6)
+## `common.security/` — auth / identity stack
 
 ### `SecurityConfig`
-The single Spring `SecurityFilterChain` for the application. Disables CSRF, sessions, form login, basic auth, and Spring's logout. Permits `/.well-known/jwks.json`, `/actuator/health/**`, `/actuator/info`, `/actuator/prometheus`, `/actuator/metrics/**`, the Swagger paths, and `/api/auth/{login,refresh,forgot-password,reset-password}`. Every other request is `.authenticated()`. Inserts `JwtAuthenticationFilter` ahead of `UsernamePasswordAuthenticationFilter`; wires `JsonAuthenticationEntryPoint` (401) and `JsonAccessDeniedHandler` (403). `@EnableMethodSecurity` so `@PreAuthorize` works.
+The single `SecurityFilterChain`. Disables CSRF, sessions, form login,
+basic auth. Permits `/.well-known/jwks.json`, `/actuator/health/**`,
+`/actuator/info`, Swagger paths, and credential-bearing auth endpoints
+(`/api/auth/{login,refresh,forgot-password,reset-password,accept-invite}`).
+`/actuator/prometheus` + `/actuator/metrics/**` fall through to
+`.authenticated()` — **not** public (changed during the pre-deploy
+hardening pass). Everything else `.authenticated()`. Inserts
+`JwtAuthenticationFilter` ahead of `UsernamePasswordAuthenticationFilter`;
+wires `JsonAuthenticationEntryPoint` (401) + `JsonAccessDeniedHandler`
+(403). `@EnableMethodSecurity` so `@PreAuthorize` works.
 
 ### `common.security.principals/`
 
-These three enums describe **who** is authenticating, independent of how. They live in `common` (not `iam`) because the JWT contract — and therefore every module that authorizes a request — has to read them from a token without depending on `iam`.
+Three enums describe **who** is authenticating, independent of how. They
+live in `common` (not `iam`) because the JWT contract has to read them
+from a token without depending on `iam`.
 
-- `UserKind` — `OPERATOR` (Orochiverse staff, cross-tenant) or `TENANT_USER` (one customer's user, single tenant).
-- `OperatorRole` — `OPERATOR_ADMIN` or `OPERATOR_SUPPORT`. Uniform across all assigned tenants.
+- `UserKind` — `OPERATOR` or `TENANT_USER`.
+- `OperatorRole` — `OPERATOR_ADMIN` or `OPERATOR_SUPPORT`.
 - `TenantRole` — `TENANT_OWNER`, `ADMIN`, `EDITOR`, `VIEWER`.
 
 ### `common.security.keys/` — RSA keypair management
 
-#### `JwtKeyProvider` (interface)
-Single source of truth for the active RSA keypair + `kid`. Methods: `signingKey()` (RSAPrivateKey), `verificationKey()` (RSAPublicKey), `activeKeyId()`.
+- `JwtKeyProvider` (interface) — `signingKey()`, `verificationKey()`, `activeKeyId()`.
+- `EphemeralRsaKeyProvider` — generates fresh RSA-2048 on construction. Dev/test only; tagged WARN at startup.
+- `FileRsaKeyProvider` — loads PEM PKCS#8 + X.509 from disk. Clear error if you feed it PKCS#1.
+- `JwtKeysConfig` — picks one or the other based on `platform.security.jwt.private-key-path`.
 
-#### `EphemeralRsaKeyProvider`
-Generates a fresh RSA-2048 keypair on construction. Used in dev / test / integration. Logs a clearly-tagged WARN at startup so it can never be confused with the prod provider.
+### `common.security.jwt/`
 
-#### `FileRsaKeyProvider`
-Loads a PEM-encoded keypair from disk: PKCS#8 private key + X.509 SubjectPublicKeyInfo public key. Helpful error message tells you to convert legacy PKCS#1 (`openssl pkcs8 -topk8 …`). Generation: `openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:2048 && openssl rsa -in private.pem -pubout -out public.pem`.
-
-#### `JwtKeysConfig`
-Selects which provider to wire: `FileRsaKeyProvider` if `platform.security.jwt.private-key-path` is set (prod), else `EphemeralRsaKeyProvider`. Both beans are `@ConditionalOnMissingBean(JwtKeyProvider.class)` so a test can override via `@TestConfiguration`.
-
-### `common.security.jwt/` — JWT issuance + verification
-
-#### `JwtProperties` (record, `@ConfigurationProperties("platform.security.jwt")`)
-Bound from YAML / env: `issuer`, `accessTokenTtl` (Duration), `clockSkew` (Duration, defaults to 30s if unset), `privateKeyPath`, `publicKeyPath`, `keyId`. Validates `issuer` and `accessTokenTtl` in the compact constructor.
-
-#### `JwtConfig`
-`@EnableConfigurationProperties(JwtProperties.class)` + a `Clock systemUTC()` bean (so tests can override with `Clock.fixed(...)`).
-
-#### `AccessTokenClaims` (record)
-The strongly-typed view of the access-token payload from spec §5.1. Fields: `issuer`, `userId`, `email`, `kind`, `operatorRole`, `activeTenantId`, `tenantRole`, `tokenVersion`, `jti`, `issuedAt`, `expiresAt`. The compact constructor enforces the kind-specific invariants (operator must have `operatorRole`; tenant user must have `activeTenantId` + `tenantRole`).
-
-#### `AccessTokenIssuer`
-Builds and signs RS256 JWTs. `issue(...)` takes the claim values, mints `iat`/`exp` from the injected `Clock`, generates a fresh `jti`, and returns `Issued(token, claims)`. The `kid` header is set to `JwtKeyProvider.activeKeyId()`.
-
-#### `AccessTokenVerifier`
-Verifies signature, issuer, and lifetime; unpacks claims back to `AccessTokenClaims`. Anything that fails — bad signature, expired, wrong issuer, malformed claims — surfaces as `JwtVerificationException`. Phase 1.5 stops here; the Phase 1.6 filter does the SecurityContext binding.
-
-#### `JwtVerificationException`
-Single error type the auth filter catches. Wraps the underlying jjwt exception so callers don't have to import jjwt's exception hierarchy.
+- `JwtProperties` — bound from YAML/env: issuer, accessTokenTtl, clockSkew, keys.
+- `JwtConfig` — `Clock systemUTC()` bean (overrideable in tests).
+- `AccessTokenClaims` (record) — strongly-typed view of token payload; compact constructor enforces kind-specific invariants.
+- `AccessTokenIssuer` — builds + signs RS256 JWTs.
+- `AccessTokenVerifier` — verifies signature, issuer, lifetime; unpacks claims. All failures → `JwtVerificationException`.
+- `JwtVerificationException` — single error type the filter catches.
 
 ### `common.security.jwks/`
 
-#### `JwksController`
-`GET /.well-known/jwks.json` returning the JWK Set with the active public key. Includes `kty`, `n`, `e`, `kid`, `alg=RS256`, `use=sig`. `Cache-Control: max-age=3600, public`.
+- `JwksController` — `GET /.well-known/jwks.json`. `Cache-Control: max-age=3600, public`.
 
 ### `common.security.passwords/`
 
-#### `PasswordHashing`
-BCrypt cost-12 hash + verify. `hash(raw)` rejects blank input; `matches(raw, stored)` returns false (not throws) on mismatch and tolerates null inputs. The `BCRYPT_COST` constant is the single grep target for "what's our work factor".
+- `PasswordHashing` — BCrypt cost 12. `hash(raw)` / `matches(raw, stored)`. Rejects blank.
+- `PasswordHashingConfig` — provides the `BCryptPasswordEncoder` bean.
 
-#### `PasswordHashingConfig`
-Provides the `BCryptPasswordEncoder` bean at the configured cost.
-
-### `common.security.auth/` — JWT auth filter + supporting types (Phase 1.6)
+### `common.security.auth/` — JWT auth filter + supporting types
 
 #### `BearerTokenExtractor`
-Static `extract(HttpServletRequest)` returning `Optional<String>`. Case-insensitive scheme match per RFC 6750 §2.1; trims whitespace.
+Static `extract(HttpServletRequest)` returning `Optional<String>`. Case-insensitive scheme per RFC 6750.
 
 #### `AuthorityResolver`
-Maps `AccessTokenClaims` → list of Spring `GrantedAuthority`. Emits two roles per principal: a kind authority (`ROLE_OPERATOR` / `ROLE_TENANT_USER`) and a role authority (`ROLE_OPERATOR_ADMIN`, `ROLE_TENANT_OWNER`, etc.). Tenant ID is **not** encoded in authorities — it lives on `TenantContext` for the duration of the request.
+Maps `AccessTokenClaims` → list of Spring `GrantedAuthority`. Emits a kind
+authority (`ROLE_OPERATOR` / `ROLE_TENANT_USER`) and a role authority
+(`ROLE_OPERATOR_ADMIN`, `ROLE_TENANT_OWNER`, …). Tenant ID is **not**
+encoded in authorities — it lives on `TenantContext`.
 
 #### `AuthenticatedUser`
-`AbstractAuthenticationToken` carrying the verified `AccessTokenClaims` as principal. Returns `claims.userId()` from `getName()`. `setAuthenticated(false)` is rejected — the instance only ever exists post-verification, downgrading silently disables authz.
+`AbstractAuthenticationToken` carrying the verified claims as principal.
+`getName()` returns `claims.userId()`. `setAuthenticated(false)` is rejected.
 
 #### `JwtAuthenticationFilter`
-`OncePerRequestFilter` that: (a) extracts the bearer, (b) verifies via `AccessTokenVerifier`, (c) builds an `AuthenticatedUser` and sets `SecurityContextHolder`, (d) if the `tid` claim is present, runs the rest of the chain inside `TenantContext.callIn(tid, ...)`. On any verification failure: clears context, lets chain continue — the `.authenticated()` matcher then triggers `JsonAuthenticationEntryPoint`.
+`OncePerRequestFilter` that: (a) extracts the bearer; (b) verifies via
+`AccessTokenVerifier`; (c) consults `TokenVersionLookup` and rejects
+tokens whose `tv` claim is stale; (d) builds an `AuthenticatedUser` and
+sets `SecurityContextHolder`; (e) populates `userId` + `tenantId` MDC
+slots; (f) if the `tid` claim is present, runs the rest of the chain
+inside `TenantContext.callIn(tid, …)`. MDC cleared in `finally`.
 
-What it deliberately does **not** do: (a) `tokenVersion` revocation check (deferred to Phase 1.10's Redis cache), (b) per-request operator-tenant-assignment re-check (the `switch-tenant` flow validates at issue time).
+#### `TokenVersionLookup` (interface)
+SPI for the `tokenVersion` check. Lives in `common.security.auth` so the
+filter depends only on this contract. Implemented by
+`iam.auth.TokenVersionResolver`. `currentVersion(userId)` returns `-1`
+when the user is gone. `invalidate(userId)` evicts the cache after
+password reset / suspend / delete / role change.
 
 #### `JsonAuthenticationEntryPoint`
-401 in JSON: `{status, error: "unauthorized", message, path, timestamp}`. No parser-level detail leaked to clients.
+401 in JSON: `{status, error: "unauthorized", message, path, timestamp}`.
 
 #### `JsonAccessDeniedHandler`
-403 counterpart: `{status, error: "forbidden", ...}`.
+403 counterpart.
 
 #### `MeController`
-`GET /api/auth/me` — returns the current principal. Used by clients to introspect their token without a server round-trip to the user repo, and by the integration tests as a smoke check on the whole filter chain. Body includes `tenantContextBound` so tests can verify the filter actually wrapped the chain in `TenantContext.callIn`.
+`GET /api/auth/me` — returns the current principal. Includes
+`tenantContextBound` so ITs can verify the filter actually wrapped the
+chain in `TenantContext.callIn`.
 
 ---
 
-## `iam/` — operator + tenant-user identity (lives in `iam_db`)
+## `iam/` — operator + tenant-user identity (`iam_db`)
 
 ### `iam.tenants/`
 
-#### `Tenant` (record, `@Document("tenants")`)
-A customer organization. Fields: `id` (the tenant ID), `name`, `status` (`TenantStatus`), `plan`, `createdBy`, `createdAt`, `updatedAt`, `settings` (free-form Map). Factory `newTrial(id, name, plan, createdBy)`. Validates id via `TenantId.requireValid` and rejects blank names.
-
-#### `TenantStatus` (enum)
-`TRIAL`, `ACTIVE`, `SUSPENDED`, `DELETED`. Lifecycle: TRIAL → ACTIVE on conversion, → SUSPENDED on billing/policy issue, → DELETED on operator-initiated tear-down (soft delete; per-tenant DB drop happens via `TenantDatabaseProvisioner.deprovision`).
-
-#### `TenantRepository` (Spring Data, `@IamScoped`)
-`MongoRepository<Tenant, String>`. Methods: `findAllByStatus(status)`. Lives in `iam_db.tenants`.
+- `Tenant` (record, `@Document("tenants")`) — `id`, `name`, `status`, `plan`, `settings`, `createdBy`, `createdAt`, `updatedAt`. Factory `newTrial(...)`.
+- `TenantStatus` (enum) — `TRIAL`, `ACTIVE`, `SUSPENDED`, `ARCHIVED`.
+- `TenantRepository` (Spring Data, `@IamScoped`) — `findAllByStatus`, `countByStatus`, plus `searchByName` / `searchByStatusAndName` (case-insensitive regex for the `?q=` admin filter).
 
 ### `iam.users/`
 
-#### `User` (record, `@Document("users")`)
-A platform user — operator OR tenant user, same collection, discriminated by `kind`. Fields: `id`, `email`, `passwordHash`, `firstName`, `lastName`, `status`, `kind`, `operatorRole` (nullable), `tenantId` (nullable), `tenantRole` (nullable), `tokenVersion`, `lastLoginAt`, `createdAt`, `updatedAt`. Factories: `newOperator(...)`, `newTenantUser(...)`. Compact constructor enforces kind-specific invariants. `canAccess(tenantId)` for tenant users; throws for operators (operator access goes through `OperatorAssignment`).
-
-#### `UserStatus` (enum)
-`INVITED`, `ACTIVE`, `SUSPENDED`, `DELETED`. Auth must reject anything other than `ACTIVE`.
-
-#### `UserRepository` (Spring Data, `@IamScoped`)
-`MongoRepository<User, String>`. Methods: `findByEmailIgnoreCase`, `existsByEmailIgnoreCase`, `findAllByKindAndStatus`, `findAllByTenantIdAndStatus`, `countByTenantId`.
+- `User` (record, `@Document("users")`) — operator OR tenant user, discriminated by `kind`. Factory methods, kind-specific invariants, `canAccess(tenantId)`.
+- `UserStatus` (enum) — `INVITED`, `ACTIVE`, `SUSPENDED`, `DELETED`. Auth only accepts `ACTIVE`.
+- `UserRepository` (Spring Data, `@IamScoped`) — `findByEmailIgnoreCase`, `existsByEmailIgnoreCase`, `findAllByKindAndStatus`, `findAllByTenantIdAndStatus`, `countByTenantId`, `countByKindAndStatus`, `countByStatus`.
 
 ### `iam.operators/`
 
-#### `OperatorAssignment` (record, `@Document("operator_assignments")`)
-Grants an OPERATOR user the right to act inside one tenant. Fields: `id`, `operatorUserId`, `tenantId`, `assignedBy`, `assignedAt`. Factory `grant(operatorUserId, tenantId, assignedBy)`. The unique compound index `(operatorUserId, tenantId)` (created by `IamBaselineIndexes`) blocks duplicate grants at the DB.
+- `OperatorAssignment` (record, `@Document("operator_assignments")`) — grants an OPERATOR the right to act inside one tenant.
+- `OperatorAssignmentRepository` — unique compound index `(operatorUserId, tenantId)`.
 
-#### `OperatorAssignmentRepository` (Spring Data, `@IamScoped`)
-`MongoRepository<OperatorAssignment, String>`. Methods: `findAllByOperatorUserId`, `findAllByTenantId`, `existsByOperatorUserIdAndTenantId`.
+### `iam.tokens/` — single-use tokens for invite + reset
+
+- `TokenPurpose` (enum) — `INVITE_ACCEPT`, `PASSWORD_RESET`.
+- `SingleUseToken` (record) — `token`, `userId`, `purpose`, `issuedAt`, `expiresAt`.
+- `SingleUseTokenStore` (interface) — `issue(userId, purpose)`, `consume(token, expectedPurpose)`, `revokeAllForUser(userId)`. Throws `InvalidTokenException` on miss/expiry.
+- `InMemorySingleUseTokenStore` — Caffeine-backed, 7-day TTL on INVITE_ACCEPT, 1-hour TTL on PASSWORD_RESET. Replaceable with a Redis-backed implementation later.
+- `InvalidTokenException` — caught by `AuthExceptionHandler`, surfaces as 401.
+
+### `iam.auth/` — `/api/auth/*` flows
+
+- `AuthService` — login / refresh / logout / switch-tenant / forgot-password / reset-password / accept-invite. Owns audit + metrics for these flows; consults `LoginRateLimiter` and `TokenVersionLookup`.
+- `AuthController` — REST surface on `/api/auth/*`. Tagged `Auth` in Swagger.
+- `AuthDtos` — every request/response shape.
+- `AuthExceptionHandler` — `@RestControllerAdvice` mapping
+  `InvalidCredentialsException` → 401, `InvalidRefreshTokenException` → 401,
+  `OperatorNotAssignedException` → 403, `InvalidTokenException` → 401,
+  `RateLimitExceededException` → 429.
+- `RefreshTokenStore` (interface) + `InMemoryRefreshTokenStore` — opaque refresh tokens, rotation on every use.
+- `RefreshToken` (record) — token, userId, issuedAt, expiresAt.
+- `LoginRateLimiter` — Caffeine-backed sliding window. 5 attempts per `(email_lowercase, ip)` per 15 minutes. `recordSuccess` clears the bucket.
+- `RateLimitExceededException` — surfaces as 429.
+- `TokenVersionResolver` — `iam`-side implementation of `TokenVersionLookup`. Caffeine cache, 30s TTL, 10k entries. Cache miss → `users.findById(...).tokenVersion()` or `-1` if gone.
+- `BootstrapOperatorRunner` — creates the first OPERATOR_ADMIN from `PLATFORM_BOOTSTRAP_OPERATOR_EMAIL/PASSWORD` if no operator exists. Idempotent; safe to leave configured.
+
+### `iam.admin/` — `/admin/api/*` surface
+
+#### `iam.admin.common/`
+- `AdminExceptions` — typed exceptions (`NotFoundException`, `ConflictException`, `UnprocessableException`).
+- `AdminExceptionHandler` — `@RestControllerAdvice` scoped to `iam.admin`, `iam.tenantadmin`, `iam.settings`. Maps to JSON 404/409/422/400.
+
+#### `iam.admin.tenants/`
+- `TenantsAdminController` — `/admin/api/tenants`. GET (with `?status=` and `?q=` filters), POST/PUT/DELETE.
+- `TenantsAdminService` — create writes the tenant + provisions the per-tenant DB; soft-delete archives + drops the DB + clears tenant settings (in try/catch so audit still lands on cleanup failure).
+- `TenantDtos`.
+
+#### `iam.admin.operators/`
+- `OperatorsAdminController` + `OperatorsAdminService` — operator CRUD (`/admin/api/operators`). Invite, list, role-change, suspend, soft-delete. **Bumps `tokenVersion` on role change / suspend / delete** and invalidates the resolver cache.
+- `OperatorAssignmentsAdminController` + `OperatorAssignmentsAdminService` — grant/revoke an operator's tenant access.
+- `OperatorDtos`, `AssignmentDtos`.
+
+#### `iam.admin.audit/`
+- `AuditAdminController` — `GET /admin/api/audit?page=&size=&actorUserId=&tenantId=`. Read-only.
+
+#### `iam.admin.stats/`
+- `StatsAdminController` — `GET /admin/api/stats/overview` returning `{tenants, tenantUsers, pendingInvites}` in one round-trip.
+- `StatsAdminService` — three `countByX` queries.
+- `StatsDtos`.
+
+#### `iam.admin.tenantusers/`
+- `AdminTenantUsersController` — `/admin/api/tenants/{tenantId}/users/*`. Wraps every handler in `TenantContext.callIn(pathTenantId, …)` so operators can manage tenant users without `switch-tenant`. Reuses `iam.tenantadmin.TenantUsersService` unchanged.
+
+### `iam.tenantadmin/` — `/api/tenant/*` self-service surface
+
+- `TenantMeController` — `GET /api/tenant/me` returning combined user + tenant view. TENANT_USER-only.
+- `TenantUsersController` + `TenantUsersService` — invite / list / get / update / delete tenant users. **Bumps `tokenVersion` on role change / suspend / delete.** TENANT_OWNER + ADMIN write, every TENANT_USER reads. Owner-protection: cannot demote/suspend/delete the last active TENANT_OWNER.
+- `TenantSettingsController` — `GET /api/tenant/settings` + `GET /api/tenant/settings/{kind}`. **Read-only.** OWNER + ADMIN only (EDITOR/VIEWER 403). Tenant id comes from `TenantContext` — no path param, structurally cannot ask about another tenant.
+- `TenantSelfDtos`.
+
+### `iam.settings/` — extensible per-tenant settings store
+
+One collection (`tenant_settings`), keyed by `(tenantId, kind)`. Adding a
+new kind = one enum value + one `SettingsKindHandler` bean.
+
+- `SettingsKind` (enum) — `MQTT`, `DJI`.
+- `TenantSetting` (record, `@Document("tenant_settings")`) — composite `_id = "<tenantId>:<kind>"`, `values` (free-form map), test-result fields.
+- `TenantSettingsRepository` (`@IamScoped`).
+- `SettingsKindHandler` (interface) — `kind()`, `secretKeys()`, `validate(values)`, `test(values)`. Service uses this to dispatch.
+- `MqttSettingsHandler` — host/port/transport/topicPrefix/username, secret: `password`. `test` opens a TCP socket via `ConnectionTester.tcpProbe`.
+- `DjiSettingsHandler` — region/endpointUrl/appKey, secret: `appSecret`. `test` does HTTPS GET via `ConnectionTester.httpProbe`.
+- `ConnectionTester` — TCP / HTTPS probes with 3s timeout. **SSRF guard** refuses loopback / link-local / RFC1918 / CGNAT / IPv6 ULA / multicast / wildcard. Dev profile can disable via `platform.settings.allow-private-test-targets=true`.
+- `TenantSettingsService` — read/upsert/delete/test. Owns persistence + audit + secret masking on read + secret merging on write (a PUT omitting a secret keeps the stored value). Constructor verifies every `SettingsKind` has a handler bean.
+- `TenantSettingsAdminController` — operator-facing CRUD + test endpoint. OPERATOR reads, OPERATOR_ADMIN writes.
+- `TenantSettingsDtos`.
 
 ---
 
-## `tenant/` (M1)
-
-Currently empty save for `package-info.java`. Tenant-admin self-service controllers land here in Phase 1.8.
-
 ## `gcs/` (M2+ placeholder)
 
-Reserved. The `RepositoryDisciplineTest` already enforces that anything appearing here must use `TenantMongoTemplateRegistry` rather than injecting `MongoTemplate` directly.
+Reserved. `RepositoryDisciplineTest` enforces that anything here must use
+`TenantMongoTemplateRegistry` rather than injecting `MongoTemplate` directly.
 
 ---
 
@@ -204,6 +347,6 @@ Reserved. The `RepositoryDisciplineTest` already enforces that anything appearin
 
 1. `tenant/` and `gcs/` may NOT inject `MongoTemplate` or extend `MongoRepository` — they MUST use `TenantMongoTemplateRegistry.forCurrentTenant()`. (`RepositoryDisciplineTest`)
 2. `iam/` and `tenant/` and `gcs/` may NOT depend on `MongoClient` directly — only `common.*` is allowed. (`RepositoryDisciplineTest`)
-3. `common/` may NOT depend on `iam`, `tenant`, or `gcs`. (`PackageBoundaryTest`) — this is what forced the `principals` enums into `common.security.principals`.
-4. `iam/` and `tenant/` may NOT depend on each other. (`PackageBoundaryTest`)
+3. `common/` may NOT depend on `iam`, `tenant`, or `gcs`. (`PackageBoundaryTest`) — this is what forced `principals` and `TokenVersionLookup` into `common.security.*`.
+4. `iam/` and `tenant/` and `gcs/` may NOT depend on each other. (`PackageBoundaryTest`)
 5. Nothing may depend on `gcs/` until M2. (`PackageBoundaryTest`)

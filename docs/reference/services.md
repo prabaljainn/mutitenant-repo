@@ -10,22 +10,22 @@ The platform is a **single deployable Spring Boot application** (modular monolit
 
 | Process | What it is | How it starts | Notes |
 |---|---|---|---|
-| `platform` (Spring Boot) | The IAM + multi-tenant API server. Single JVM, port 8080. | `./scripts/run-app.sh` (dev) or the Dockerfile (prod). | Java 25 + virtual threads enabled (`spring.threads.virtual.enabled=true`). |
+| `platform` (Spring Boot) | The IAM + multi-tenant API server. Single JVM, port 8080. | `./scripts/run-app.sh` (dev) or the Dockerfile (prod). | Java 25 + virtual threads (`spring.threads.virtual.enabled=true`) + ZGC. |
 
-That's it. There is no separate auth server, gateway, or worker — by design (see `docs/architecture/01-system-overview.md`).
+There is no separate auth server, gateway, or worker — by design (see `docs/architecture/01-system-overview.md`).
 
 ---
 
 ## Local Docker stack (`deployment/docker-compose.yml`)
 
-Started by `./scripts/dev-up.sh`. Stopped by `./scripts/dev-down.sh`. Reset (drop all data) by `./scripts/dev-reset.sh`. Status by `./scripts/dev-status.sh`.
+Started by `./scripts/dev-up.sh`. Stopped by `./scripts/dev-down.sh`. Reset (drop all data) by `./scripts/dev-reset.sh`. Status by `./scripts/dev-status.sh`. Restart everything cleanly with `./scripts/dev-rerun.sh`.
 
 | Service | Container | Host port | Image | Purpose |
 |---|---|---|---|---|
 | `mongodb` | `orochiverse-mongodb` | **27017** | `mongo:8.0` | Primary data store. Single-node replica set `rs0` (required for transactions). |
 | `mongo-init` | (one-shot) | — | `mongo:8.0` | Initializes the replica set. Exits 0 once `rs.status()` reports PRIMARY. |
-| `redis` | `orochiverse-redis` | **6379** | `redis:7.4-alpine` | Refresh-token store, login rate-limiter (Phase 1.10). Not yet wired in M1. |
-| `mailhog` | `orochiverse-mailhog` | **1025** SMTP / **8025** UI | `mailhog/mailhog` | Captures outbound email locally (Phase 1.9). |
+| `redis` | `orochiverse-redis` | **6379** | `redis:7.4-alpine` | Refresh-token store + login rate-limit buckets. |
+| `mailhog` | `orochiverse-mailhog` | **1025** SMTP / **8025** UI | `mailhog/mailhog` | Captures outbound email locally (invites, password resets). |
 | `traefik` (optional) | `orochiverse-traefik` | **80** / **8081** dashboard | `traefik:v3.x` | Reverse proxy. Enabled with `docker compose --profile proxy up`. |
 
 ### Connecting to local Mongo
@@ -36,16 +36,42 @@ Started by `./scripts/dev-up.sh`. Stopped by `./scripts/dev-down.sh`. Reset (dro
 
 ---
 
+## Production Docker stack (`deployment/prod/docker-compose.yml`)
+
+The full prod compose — Traefik v3 with Let's Encrypt (TLS-ALPN-01), Mongo 8 with `--auth` + keyfile, Redis 7.4 with `requirepass`, and the `platform` container pulled from GHCR. Six commands from clone to a TLS-terminated API on a public hostname — see `docs/deployment.md` for the runbook.
+
+| Service | Purpose | Auth |
+|---|---|---|
+| `traefik` | TLS termination + reverse proxy. Auto-issues a Let's Encrypt cert for `${PLATFORM_HOSTNAME}`. | — |
+| `mongodb` | Single-node `rs0` with `--auth --keyFile`. Init container creates app user. | `MONGO_INITDB_ROOT_USERNAME` / `MONGO_APP_USERNAME` env. |
+| `redis` | `--requirepass ${REDIS_PASSWORD}`. | `REDIS_PASSWORD`. |
+| `platform` | The app image from GHCR. JWT key files mounted from `deployment/prod/secrets/jwt/`. | JWT RS256. |
+
+`deployment/prod/.env` is the single secret file the operator fills in (template at `.env.example`). Keys are generated locally with `scripts/gen-jwt-keys.sh` and `scripts/gen-mongo-keyfile.sh` — neither command commits anything to the repo.
+
+---
+
+## GHCR image pipeline (`.github/workflows/`)
+
+| Workflow | When | What it does |
+|---|---|---|
+| `build.yml` | Every push + PR | `./mvnw verify` against Mongo service container; uploads jar + surefire reports. |
+| `release.yml` | Push to `main`, tag `v*` | Builds multi-arch image (linux/amd64 + linux/arm64) via QEMU + buildx, pushes to `ghcr.io/<owner>/<repo>/platform`. `:latest` on `main`, `:v1.2.3` on tags. |
+
+The prod compose pulls `ghcr.io/<owner>/<repo>/platform:${PLATFORM_IMAGE_TAG:-latest}`.
+
+---
+
 ## Spring profiles
 
 Profile is selected via `SPRING_PROFILES_ACTIVE` (or `--spring.profiles.active=...`). Default is `dev` (`spring.profiles.default: dev` in `application.yml`).
 
 | Profile | When | Mongo | Redis | Mail | Notes |
 |---|---|---|---|---|---|
-| `dev` | Local laptop | localhost:27017, `iam_db` | localhost:6379 (when wired) | MailHog 1025 | Mongock runs at startup. |
-| `test` | Unit tests via Surefire | **excluded** (autoconfig off) | excluded | excluded | No infra deps; smoke + pure-unit tests live here. |
-| `integration` | Failsafe ITs that need Mongo | enabled, URI per-test via `@DynamicPropertySource` | excluded | excluded | Mongo dev stack must be up. |
-| `prod` | Deployed env | `MONGODB_URI` env | `REDIS_URL` env | SMTP env | Every secret comes from env; nothing in repo. |
+| `dev` | Local laptop | localhost:27017, `iam_db` | localhost:6379 | MailHog 1025 | Mongock runs at startup. `EphemeralRsaKeyProvider` (warns). |
+| `test` | Unit tests via Surefire | **excluded** (autoconfig off) | excluded | excluded | No infra deps; pure-unit tests live here. |
+| `integration` | Failsafe ITs that need Mongo | enabled, URI per-test via `@DynamicPropertySource` | optional | excluded | Mongo dev stack must be up. ITs skip when not reachable. |
+| `prod` | Deployed env | `MONGODB_URI` env | `REDIS_URL` env | SMTP env | Every secret from env. `FileRsaKeyProvider` mounted from `/secrets/jwt/`. |
 
 `UserDetailsServiceAutoConfiguration` is excluded in **every** profile (we don't want Spring's auto-generated user; auth is JWT-only).
 
@@ -54,10 +80,11 @@ Profile is selected via `SPRING_PROFILES_ACTIVE` (or `--spring.profiles.active=.
 ## Startup order
 
 1. **Spring context loads**, beans wire up. `@EnableMongock` triggers …
-2. **Mongock** runs every `@ChangeUnit` in `common.migrations.iam` against `iam_db`. Currently: `IamBaselineIndexes` (creates indexes on `users`, `tenants`, `operator_assignments`, `audit_log`).
+2. **Mongock** runs every `@ChangeUnit` in `common.migrations.iam` against `iam_db`. Currently: `IamBaselineIndexes` (creates indexes on `users`, `tenants`, `operator_assignments`, `audit_log`, `tenant_settings`, `single_use_tokens`).
 3. **`JwtKeysConfig`** decides between `EphemeralRsaKeyProvider` (no `private-key-path` set — dev/test) or `FileRsaKeyProvider` (prod). `EphemeralRsaKeyProvider` logs a tagged WARN.
-4. **`SecurityConfig`** assembles the filter chain. `JwtAuthenticationFilter` is inserted ahead of `UsernamePasswordAuthenticationFilter`.
-5. **Tomcat** binds port 8080 (`server.port`). Smoke endpoints alive: `/actuator/health`, `/.well-known/jwks.json`.
+4. **`SecurityConfig`** assembles the filter chain. `RequestIdMdcFilter` + `JwtAuthenticationFilter` are inserted ahead of `UsernamePasswordAuthenticationFilter`.
+5. **`BootstrapOperatorRunner`** seeds `admin@orochiverse.local` / `ChangeMe123!` if no operator exists (dev-only behavior — controlled via `platform.bootstrap.operator.*`).
+6. **Tomcat** binds port 8080 (`server.port`). Smoke endpoints alive: `/actuator/health`, `/.well-known/jwks.json`, `/swagger-ui.html`.
 
 A startup that takes longer than ~5s is suspicious — usually a Mongo connection problem; check the `dev-up.sh` stack is healthy.
 
@@ -72,16 +99,14 @@ Anything not listed here requires a valid Bearer JWT and runs through `JwtAuthen
 | `/.well-known/jwks.json` | GET | Anyone | Public key for token verification. `Cache-Control: max-age=3600`. |
 | `/actuator/health/**` | GET | Anyone | Standard Boot health. Detail visible to authenticated callers (`show-details: when-authorized`). |
 | `/actuator/info` | GET | Anyone | Build/version info. |
-| `/actuator/prometheus` | GET | Anyone | Metrics scrape (Phase 1.10). Lock down via network policy in prod. |
-| `/actuator/metrics/**` | GET | Anyone | Same. |
 | `/v3/api-docs/**`, `/swagger-ui/**`, `/swagger-ui.html` | GET | Anyone (in M1) | Gate or remove in prod via Traefik. |
-| `/api/auth/login` | POST | Anyone | Phase 1.7 — credential-bearing entry point. |
-| `/api/auth/refresh` | POST | Anyone | Phase 1.7 — refresh-token-bearing entry point. |
-| `/api/auth/forgot-password` | POST | Anyone | Phase 1.7. |
-| `/api/auth/reset-password` | POST | Anyone | Phase 1.7. |
-| `/api/auth/me` | GET | Authenticated | Returns the current principal. Useful for client-side token introspection. |
+| `/api/auth/login` | POST | Anyone | Credential entry. Rate-limited per `(email, ip)` 5/15min. |
+| `/api/auth/refresh` | POST | Anyone | Refresh-token entry. |
+| `/api/auth/forgot-password` | POST | Anyone | Issues single-use token, sends email. |
+| `/api/auth/reset-password` | POST | Anyone | Consumes single-use token, bumps `tv`. |
+| `/api/auth/accept-invite` | POST | Anyone | Activates invited user, sets password. |
 
-Phase 1.7 (operator admin), 1.8 (tenant admin), and beyond add more endpoints behind `.authenticated()`.
+Everything else — including `/actuator/prometheus` and `/actuator/metrics/**` — falls through to `.authenticated()`. The Prometheus scrape requires a Bearer token (e.g., an operator service account); lock it down at the network layer too.
 
 ---
 
@@ -94,6 +119,7 @@ HTTP request
 JwtAuthenticationFilter
    ├─ extract Bearer
    ├─ verify (sig + iss + exp)
+   ├─ check claims.tv() == TokenVersionResolver.versionOf(userId)   [Caffeine, 30s TTL]
    ├─ build AuthenticatedUser
    ├─ SecurityContextHolder.set(auth)
    └─ if claims.activeTenantId() != null:
@@ -112,7 +138,7 @@ JwtAuthenticationFilter
             tenant_<id>_db MongoTemplate (cached)
 ```
 
-The point is that the controller and service layers never see the JWT or compute the tenant ID — they just call `forCurrentTenant()` and the filter has already arranged for the right answer to come back.
+Controllers and services never see the JWT or compute the tenant ID — they just call `forCurrentTenant()` and the filter has already arranged for the right answer to come back.
 
 ---
 
@@ -120,8 +146,9 @@ The point is that the controller and service layers never see the JWT or compute
 
 | Database | Owner | Collections | Indexes from |
 |---|---|---|---|
-| `iam_db` | `common` + `iam` | `users`, `tenants`, `operator_assignments`, `audit_log`, `mongockChangeLog` | `IamBaselineIndexes` |
-| `tenant_<id>_db` | `tenant` (M1) + `gcs` (M2+) | per-tenant — created on-demand by features | `TenantDatabaseProvisioner.provision()` writes the marker doc and creates per-tenant indexes |
+| `iam_db` | `common` + `iam` | `users`, `tenants`, `operator_assignments`, `audit_log` (TTL 90d), `tenant_settings`, `single_use_tokens` (TTL on `expiresAt`), `mongockChangeLog` | `IamBaselineIndexes` |
+| `tenant_<id>_db` | `iam.tenantadmin` (M1) + `gcs` (M2+) | per-tenant — created on-demand by features | `TenantDatabaseProvisioner.provision()` writes the marker doc and creates per-tenant indexes |
+| Redis | `iam.auth` + `common.observability` | refresh tokens (`rt:<jti>`), login buckets (`login:<email>:<ip>`) | — |
 
 Spring's autoconfigured `MongoTemplate` (driven by `spring.data.mongodb.uri`) targets `iam_db` only. The `TenantMongoTemplateRegistry` builds independent templates for each tenant DB on top of the same `MongoClient` connection pool.
 
@@ -132,8 +159,8 @@ Spring's autoconfigured `MongoTemplate` (driven by `spring.data.mongodb.uri`) ta
 | Goal | What it does |
 |---|---|
 | `./mvnw clean install` | Full build: Spotless apply, compile, unit tests, IT tests (if Mongo reachable), package jar. |
-| `./mvnw test` | Unit tests only (Surefire). |
-| `./mvnw verify` | Unit + integration tests (Failsafe). |
+| `./mvnw test` | 199 unit tests (Surefire). |
+| `./mvnw verify` | + 113 integration tests (Failsafe). |
 | `./mvnw test -DskipITs` | Skip the `*IT` classes. |
 | `./mvnw spotless:apply` | Re-format imports + whitespace manually. |
 
@@ -145,10 +172,13 @@ Spotless runs as part of `process-sources` so a `clean install` always normalize
 
 | Script | Purpose |
 |---|---|
-| `dev-up.sh` | Start Mongo + (optionally) Redis + MailHog via Docker. |
+| `dev-up.sh` | Start Mongo + Redis + MailHog via Docker. |
 | `dev-down.sh` | Stop the stack (data preserved). |
 | `dev-reset.sh` | Stop + drop all volumes. Use when you want a clean Mongo. |
+| `dev-rerun.sh` | `dev-down` then `dev-up` — fastest way to recycle. |
 | `dev-status.sh` | Print container status + health. |
 | `dev-logs.sh` | `docker compose logs -f` for the stack. |
-| `run-app.sh` | Resolve Java 25 home (`~/bin/jdk-25*`, `~/.jdks`, sdkman, Homebrew), then `mvnw spring-boot:run`. `--debug` enables JDWP on 5005. |
+| `run-app.sh` | Resolve Java 25 home (`~/bin/jdk-25*`, `~/.jdks`, sdkman, Homebrew), then `mvnw spring-boot:run`. `--debug` enables JDWP on 5005; `--suspend` waits for debugger. |
+| `gen-jwt-keys.sh` | Generate the prod RS256 keypair under `deployment/prod/secrets/jwt/` (refuses to overwrite). |
+| `gen-mongo-keyfile.sh` | Generate the Mongo internal-auth keyfile (`deployment/prod/secrets/mongo/keyfile`, mode 400). |
 | `_lib.sh` | Shared `resolve_java_home()` helper. |

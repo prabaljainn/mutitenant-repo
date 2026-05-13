@@ -112,21 +112,63 @@ So `@PreAuthorize("hasRole('OPERATOR')")` matches both operator subkinds; `hasRo
 
 ## Endpoint matrix (M1)
 
+### Auth (`/api/auth/*`)
+
 | Endpoint | Method | Required role |
 |---|---|---|
-| `/api/auth/login`, `/refresh`, `/forgot-password`, `/reset-password` | POST | (public) |
-| `/api/auth/me`, `/logout` | GET / POST | any authenticated |
-| `/api/auth/switch-tenant` | POST | `OPERATOR` (any subkind) |
-| `/admin/api/tenants` | GET | `OPERATOR` |
-| `/admin/api/tenants` | POST / PUT / DELETE | `OPERATOR_ADMIN` |
-| `/admin/api/operators` | GET | `OPERATOR` |
-| `/admin/api/operators` | POST / PUT / DELETE | `OPERATOR_ADMIN` |
-| `/admin/api/operators/{id}/assignments` | GET | `OPERATOR` |
-| `/admin/api/operators/{id}/assignments` | POST / DELETE | `OPERATOR_ADMIN` |
-| `/admin/api/audit` | GET | `OPERATOR` |
-| `/api/tenant/users` | GET / POST / PUT / DELETE | `TENANT_OWNER` or `ADMIN` (Phase 1.8) |
-| `/api/tenant/me` | GET | any `TENANT_USER` (Phase 1.8) |
-| `/.well-known/jwks.json`, `/actuator/health/**`, `/actuator/info`, `/actuator/prometheus`, `/swagger-ui/**` | GET | (public) |
+| `/login` | POST | (public) — rate-limited per `(email, ip)`, 5/15min |
+| `/refresh` | POST | (public) — sliding refresh-token window |
+| `/forgot-password` | POST | (public) |
+| `/reset-password` | POST | (public) — consumes single-use token, bumps `tv` |
+| `/accept-invite` | POST | (public) — consumes single-use token |
+| `/logout` | POST | any authenticated |
+| `/me` | GET | any authenticated |
+| `/switch-tenant` | POST | `OPERATOR` (any subkind) |
+
+### Operator admin (`/admin/api/*`)
+
+| Endpoint | Method | Required role |
+|---|---|---|
+| `/stats/overview` | GET | `OPERATOR` |
+| `/tenants` | GET | `OPERATOR` |
+| `/tenants` | POST | `OPERATOR_ADMIN` |
+| `/tenants/{id}` | GET | `OPERATOR` |
+| `/tenants/{id}` | PUT / DELETE | `OPERATOR_ADMIN` |
+| `/tenants/{tenantId}/users` | GET | `OPERATOR` |
+| `/tenants/{tenantId}/users` | POST | `OPERATOR_ADMIN` — invites a tenant user; bumps `tv` on suspend/role-change/delete |
+| `/tenants/{tenantId}/users/{userId}` | GET | `OPERATOR` |
+| `/tenants/{tenantId}/users/{userId}` | PUT / DELETE | `OPERATOR_ADMIN` |
+| `/tenants/{tenantId}/settings` | GET | `OPERATOR` — list all kinds |
+| `/tenants/{tenantId}/settings/{kind}` | GET | `OPERATOR` |
+| `/tenants/{tenantId}/settings/{kind}` | PUT / DELETE | `OPERATOR_ADMIN` |
+| `/tenants/{tenantId}/settings/{kind}/test` | POST | `OPERATOR_ADMIN` — dry-run via `ConnectionTester` (SSRF-guarded) |
+| `/operators` | GET | `OPERATOR` |
+| `/operators` | POST | `OPERATOR_ADMIN` |
+| `/operators/{id}` | GET | `OPERATOR` |
+| `/operators/{id}` | PUT / DELETE | `OPERATOR_ADMIN` |
+| `/operators/{operatorId}/assignments` | GET | `OPERATOR` |
+| `/operators/{operatorId}/assignments` | POST | `OPERATOR_ADMIN` |
+| `/operators/{operatorId}/assignments/{tenantId}` | DELETE | `OPERATOR_ADMIN` |
+| `/audit` | GET | `OPERATOR` |
+
+### Tenant self-service (`/api/tenant/*`)
+
+| Endpoint | Method | Required role |
+|---|---|---|
+| `/me` | GET | any `TENANT_USER` |
+| `/users` | GET | any `TENANT_USER` |
+| `/users` | POST | `TENANT_OWNER` or `ADMIN` |
+| `/users/{id}` | GET | any `TENANT_USER` |
+| `/users/{id}` | PUT / DELETE | `TENANT_OWNER` or `ADMIN` — bumps `tv` on suspend/role-change/delete |
+| `/settings` | GET | `TENANT_OWNER` or `ADMIN` — read-only view of own tenant's settings |
+| `/settings/{kind}` | GET | `TENANT_OWNER` or `ADMIN` |
+
+### Infra surface
+
+| Endpoint | Method | Required role |
+|---|---|---|
+| `/.well-known/jwks.json`, `/actuator/health/**`, `/actuator/info`, `/v3/api-docs/**`, `/swagger-ui/**` | GET | (public) |
+| `/actuator/prometheus`, `/actuator/metrics/**` | GET | any authenticated — **no longer public**; gate further by network policy |
 
 ---
 

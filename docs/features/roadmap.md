@@ -1,95 +1,119 @@
-# Feature Roadmap & Backlog
+# Roadmap
 
-## 🏁 Phase 0: Foundation (Current)
-> Setting the base — no code, documentation and decisions only.
-
-| # | Feature | Status | Priority | Notes |
-|---|---------|--------|----------|-------|
-| F-001 | Architecture documentation | 🟡 In Progress | P0 | System overview, multi-tenancy, auth, email |
-| F-002 | Deployment infrastructure (Docker Compose) | 🟡 In Progress | P0 | MongoDB, Redis, Mailhog |
-| F-003 | Repository structure setup | 🟡 In Progress | P0 | deployment/ + platform/ separation |
-| F-004 | Technology decisions finalized | 🔴 Blocked | P0 | Pending review of architecture docs |
+Where the platform is, and what's next. Status reflects what's on `main`.
 
 ---
 
-## 🏗️ Phase 1: Core Platform (Next)
-> Build the skeleton — Spring Boot project, auth, basic admin.
+## ✅ M1 — Platform shell (DONE)
 
-| # | Feature | Status | Priority | Notes |
-|---|---------|--------|----------|-------|
-| F-010 | Spring Boot project initialization | ⚪ Not Started | P0 | Gradle multi-module, Java 21 |
-| F-011 | MongoDB connection + base config | ⚪ Not Started | P0 | Spring Data MongoDB |
-| F-012 | Tenant data model + CRUD | ⚪ Not Started | P0 | Create/Read/Update/Deactivate tenants |
-| F-013 | User data model + CRUD | ⚪ Not Started | P0 | Users with multi-tenant memberships |
-| F-014 | Authentication (login/logout/refresh) | ⚪ Not Started | P0 | JWT + refresh tokens in Redis |
-| F-015 | Password reset flow | ⚪ Not Started | P0 | Email-based reset with secure tokens |
-| F-016 | Tenant context interceptor | ⚪ Not Started | P0 | Auto-filter all queries by tenantId |
-| F-017 | Role-based authorization (RBAC) | ⚪ Not Started | P0 | Platform roles + tenant roles |
-| F-018 | Email service (password reset emails) | ⚪ Not Started | P1 | Thymeleaf templates + SMTP/SendGrid |
+The IAM + multi-tenancy foundation. Operators can stand up tenants and invite
+users; tenant admins can manage their own users; integrations (MQTT, DJI) are
+configurable per tenant. Production deployable.
 
----
+| # | Phase | Status | What landed |
+|---|---|---|---|
+| 1.1 | Repo & build skeleton | ✅ | Maven multi-module-style packaging, Spotless, Java 25, GH Actions test pipeline. |
+| 1.2 | Mongo 8 dev env + Spotless + runner scripts | ✅ | `scripts/dev-*.sh`, `MongoConnectivityIT`. |
+| 1.3 | Multi-tenant Mongo wiring | ✅ | `TenantContext` (Java 25 `ScopedValue`), `TenantMongoTemplateRegistry`, `TenantDatabaseProvisioner`, per-tenant DB. |
+| 1.4 | IAM data model + Mongock | ✅ | `User`, `Tenant`, `OperatorAssignment`, `AuditEntry`, baseline indexes via `IamBaselineIndexes`. |
+| 1.5 | JWT / JWKS / BCrypt | ✅ | `AccessTokenIssuer`/`Verifier`, `JwksController`, `PasswordHashing` (cost 12), file + ephemeral key providers. |
+| 1.6 | Security filter chain | ✅ | `JwtAuthenticationFilter` binds `SecurityContext` and `TenantContext` per request; `@EnableMethodSecurity`. |
+| 1.7a | Auth APIs | ✅ | `/api/auth/{login,refresh,logout,switch-tenant,me}`. |
+| 1.7b | Operator admin APIs | ✅ | `/admin/api/{tenants,operators,operators/{id}/assignments,audit}`. |
+| 1.8 | Tenant-admin self-service | ✅ | `/api/tenant/{me,users}` — TENANT_OWNER + ADMIN write, every role reads. |
+| 1.9 | Email service + invite-accept + password reset | ✅ | Thymeleaf templates, SMTP, single-use tokens, MailHog for dev capture. |
+| 1.10 | Observability + auth hardening | ✅ | `RequestIdMdcFilter`, `LoginRateLimiter`, `TokenVersionLookup`+`Resolver` (Caffeine), `AuthMetrics`. |
+| 1.11 | Test fixtures + JWT test support | ✅ | `testsupport/` package (`IT`, `IamFixtures`, `JwtTestSupport`, `MongoTestSupport`) — replaced `AdminItSupport`. |
+| 1.12 | CI + Dockerfile + OpenAPI hardening | ✅ | `.github/workflows/build.yml`, HEALTHCHECK + non-root in Dockerfile, `@Tag` on every controller. |
 
-## 🎨 Phase 2: Admin Dashboard API
-> Super-admin functionality — manage tenants, users, system.
+### Gap fills (post-1.12, before deploy)
 
-| # | Feature | Status | Priority | Notes |
-|---|---------|--------|----------|-------|
-| F-020 | Admin - List/search all tenants | ⚪ Not Started | P0 | With pagination, search, filters |
-| F-021 | Admin - Create new tenant | ⚪ Not Started | P0 | With initial owner user setup |
-| F-022 | Admin - View/edit tenant details | ⚪ Not Started | P0 | Name, slug, status, plan |
-| F-023 | Admin - Suspend/activate tenant | ⚪ Not Started | P1 | Soft-disable all access |
-| F-024 | Admin - List users across tenants | ⚪ Not Started | P0 | Cross-tenant user view |
-| F-025 | Admin - User management in tenant | ⚪ Not Started | P0 | Add/remove/change roles |
-| F-026 | Admin - Role management | ⚪ Not Started | P1 | Define custom roles if needed |
-| F-027 | Admin - System dashboard (stats) | ⚪ Not Started | P2 | Total tenants, users, activity |
-| F-028 | Admin - Email template management | ⚪ Not Started | P2 | View/edit email templates |
+The CloudGCS admin-console prototype review surfaced four missing APIs and six review findings. All landed on `main`:
 
----
+| Gap / Fix | What | Status |
+|---|---|---|
+| `GET /admin/api/stats/overview` | One-shot dashboard counters (tenants, tenantUsers, pendingInvites). | ✅ |
+| `?q=` on `/admin/api/tenants` | Server-side case-insensitive substring search. | ✅ |
+| `/admin/api/tenants/{id}/users/*` | Admin-side tenant-user CRUD without `switch-tenant` dance. | ✅ |
+| `/admin/api/tenants/{id}/settings/{kind}` | Extensible per-tenant settings store (MQTT, DJI, …). | ✅ |
+| `/api/tenant/settings/{kind}` | Tenant-side read view (OWNER + ADMIN). | ✅ |
+| `tv` bump on suspend / role-change / delete | Access tokens revoked immediately, not at TTL expiry. | ✅ |
+| `/actuator/prometheus` no longer public | Falls through to `.authenticated()`. | ✅ |
+| SSRF guard in `ConnectionTester` | Refuses loopback / link-local / RFC1918 / CGNAT / IPv6 ULA. | ✅ |
+| `try/finally` on settings cleanup | Audit always lands even if cleanup blips. | ✅ |
+| ConnectionTester success-path tests | 12 new unit tests. | ✅ |
+| Mongo grant + 4 limits documented | "Known limitations" section in `docs/deployment.md`. | ✅ |
 
-## 👤 Phase 3: Tenant Platform API
-> End-user experience — tenant-scoped features.
+### Deployment
 
-| # | Feature | Status | Priority | Notes |
-|---|---------|--------|----------|-------|
-| F-030 | Tenant dashboard | ⚪ Not Started | P1 | Tenant-specific overview |
-| F-031 | User profile management | ⚪ Not Started | P1 | View/edit own profile |
-| F-032 | Tenant switching | ⚪ Not Started | P1 | Switch between tenants (multi-tenant users) |
-| F-033 | User invitation flow | ⚪ Not Started | P1 | Invite by email, accept invitation |
-
----
-
-## 🔐 Phase 4: Advanced Security
-> Hardening the platform.
-
-| # | Feature | Status | Priority | Notes |
-|---|---------|--------|----------|-------|
-| F-040 | Rate limiting (login, API) | ⚪ Not Started | P1 | Redis-based |
-| F-041 | Audit trail logging | ⚪ Not Started | P1 | Who did what, when |
-| F-042 | MFA (TOTP) | ⚪ Not Started | P2 | Optional per-user |
-| F-043 | OAuth2 social login | ⚪ Not Started | P2 | Google, GitHub |
-| F-044 | API key management | ⚪ Not Started | P3 | For programmatic access |
+| | Status |
+|---|---|
+| Multi-arch GHCR image pipeline (amd64 + arm64) | ✅ `.github/workflows/release.yml` |
+| Production docker-compose (Traefik + Let's Encrypt + Mongo auth + Redis auth) | ✅ `deployment/prod/` |
+| JWT keypair + Mongo keyfile generators | ✅ `scripts/gen-jwt-keys.sh`, `scripts/gen-mongo-keyfile.sh` |
+| End-to-end deployment doc | ✅ `docs/deployment.md` |
 
 ---
 
-## 🎯 Phase 5: Advanced Features (Future)
-> Based on business requirements.
+## 🛠 M1.5 — Frontend (NOT STARTED)
 
-| # | Feature | Status | Priority | Notes |
-|---|---------|--------|----------|-------|
-| F-050 | Tenant billing / plan management | ⚪ Not Started | P2 | Free/Pro/Enterprise tiers |
-| F-051 | Tenant-branded emails | ⚪ Not Started | P3 | Custom logos/colors in emails |
-| F-052 | Webhooks | ⚪ Not Started | P3 | Event notifications to tenants |
-| F-053 | API rate limiting per tenant/plan | ⚪ Not Started | P3 | Plan-based quotas |
-| F-054 | Admin UI (frontend) | ⚪ Not Started | P2 | React/Next.js admin dashboard |
-| F-055 | Tenant Platform UI (frontend) | ⚪ Not Started | P2 | React/Next.js tenant app |
+The admin console prototype is in `docs/postman/` and the prototype HTML
+bundle. Implementing the React SPA against the M1 API.
+
+| # | Feature | Priority |
+|---|---|---|
+| F-100 | Scaffold `admin-console/` React project | P0 |
+| F-101 | Login + token refresh + logout | P0 |
+| F-102 | Dashboard (Overview with `/admin/api/stats`) | P0 |
+| F-103 | Tenants list + create + detail | P0 |
+| F-104 | Tenant detail → Members tab (admin-side CRUD) | P0 |
+| F-105 | Tenant detail → Settings tab (MQTT + DJI forms) | P0 |
+| F-106 | Operators list + invite | P1 |
+| F-107 | Audit log viewer | P1 |
+| F-108 | Tenant-facing SPA (separate project) | P2 |
 
 ---
 
-## Priority Legend
+## 🚀 M2 — Drone domain (NOT STARTED)
 
-| Symbol | Meaning |
-|--------|---------|
-| P0 | Must have — blocks everything else |
-| P1 | Should have — expected in first usable version |
-| P2 | Nice to have — second iteration |
-| P3 | Future — planned but not urgent |
+The first real feature module. Lives in `gcs/` which is currently a
+placeholder. Module-boundary tests already enforce that `gcs.*` must use
+`TenantMongoTemplateRegistry.forCurrentTenant()` and store everything in
+`tenant_<id>_db`.
+
+| # | Feature | Priority |
+|---|---|---|
+| F-200 | Drone fleet (Normal + DJI) | P0 |
+| F-201 | Drone telemetry ingestion (MQTT, uses tenant's broker settings) | P0 |
+| F-202 | Saved locations | P1 |
+| F-203 | Missions (plan, queue, execute) | P0 |
+| F-204 | Mission console (live telemetry + commands) | P1 |
+| F-205 | DJI Cloud integration (uses tenant's DJI settings) | P1 |
+
+---
+
+## 🔐 M3+ — Hardening (NOT STARTED)
+
+Picked up from the deploy-time "known limitations" list in `docs/deployment.md`.
+
+| # | Item | Why | Priority |
+|---|---|---|---|
+| F-300 | JWT keypair hot rotation | Currently "stop, regenerate, restart"; 15-minute outage at worst. | P1 |
+| F-301 | Redis-backed `TokenVersionLookup` cache | Per-instance Caffeine cache only works single-node. | P2 |
+| F-302 | Per-email rate-limit bucket | Today's `(email, ip)` bucket is defeated by IP rotation. | P2 |
+| F-303 | Mongo app-user grant tightening | Replace `readWriteAnyDatabase` with a per-tenant role granted by the provisioner. | P2 |
+| F-304 | MFA (TOTP) | Optional per-user. | P3 |
+| F-305 | OAuth2 / SAML | When the first customer asks for SSO. | P3 |
+| F-306 | API keys for programmatic access | Out of scope until external integrations land. | P3 |
+| F-307 | Tenant-side write on integration settings | Today operators set this up; self-service is a UX call. | P3 |
+
+---
+
+## Priority legend
+
+| | Meaning |
+|---|---|
+| P0 | Must have — blocks the milestone. |
+| P1 | Should have — first usable version. |
+| P2 | Nice to have — second iteration. |
+| P3 | Future — planned but not urgent. |

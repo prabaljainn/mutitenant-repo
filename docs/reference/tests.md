@@ -2,7 +2,7 @@
 
 Every test class in `platform/src/test/java`, what it verifies, and how to run it.
 
-**Total: 247 tests** — 159 unit (Surefire) + 88 integration (Failsafe).
+**Total: 312 tests** — 199 unit (Surefire) + 113 integration (Failsafe). All green.
 
 ---
 
@@ -20,7 +20,7 @@ Every test class in `platform/src/test/java`, what it verifies, and how to run i
 
 ### CI
 
-`.github/workflows/build.yml` runs `./mvnw verify` on every push to `main` and every PR. Surefire (159 tests) runs in full; Failsafe ITs that need Mongo skip themselves on the GitHub runner via the `@EnabledIf` gate, so the build stays green without standing up a dev stack in CI. Test reports are uploaded as an artifact when the job fails. To exercise the Mongo-backed ITs end-to-end, run `./scripts/dev-up.sh && ./mvnw verify` locally.
+`.github/workflows/build.yml` runs `./mvnw verify` on every push to `main` and every PR against a Mongo service container, so both Surefire (199 tests) and Failsafe (113 tests) run in full in CI. `.github/workflows/release.yml` builds a multi-arch (amd64 + arm64) Docker image on every push to `main` and pushes it to GHCR as `ghcr.io/<owner>/<repo>/platform:latest`; tagging `v1.2.3` mints a semver release.
 
 ---
 
@@ -166,6 +166,123 @@ Mocked-verifier filter behavior:
 - tenant-user token → chain runs inside `TenantContext`, value matches `tid`, scope cleared after
 - operator with switched `tid` → tenant context bound
 
+The filter now also calls `TokenVersionLookup.versionOf(userId)` and rejects when the claim's `tv` is stale — covered end-to-end in `AuthApiIT` (revocation-after-suspend).
+
+### `common/observability/` — Phase 1.10
+
+#### `RequestIdMdcFilterTest` — 3 tests
+- generates a new `requestId` when the header is absent and populates the MDC for the request lifecycle
+- propagates the inbound `X-Request-Id` header verbatim (clients can correlate)
+- clears the MDC after the chain returns, even on exception
+
+#### `AuthMetricsTest` — 2 tests
+- `loginSuccess()` / `loginFailure()` increment the right Micrometer counters with the right tags
+- `tokenRefresh()` increments the refresh counter
+
+### `common/email/` — Phase 1.9
+
+#### `EmailRenderingTest` — 4 tests
+- invite template renders with substituted `{name}`, `{tenantName}`, `{inviteUrl}`
+- reset-password template renders with substituted `{resetUrl}`, `{ttl}`
+- Thymeleaf TEXT mode is used (no HTML escaping artifacts in plain-text emails)
+- missing template variable surfaces a clear error rather than rendering `${var}` literally
+
+### `iam/auth/` — Phase 1.7 / 1.9 / 1.10
+
+#### `AuthServiceTest` — 20 tests
+The login/refresh/logout/forgot-password/reset-password/accept-invite/switch-tenant happy paths and edge cases — all with mocked repos, mocked `PasswordHashing`, mocked `RefreshTokenStore`, mocked `LoginRateLimiter`, mocked `AccessTokenIssuer`, mocked `EmailService`. Asserts `tv` is bumped on password reset.
+
+#### `InMemoryRefreshTokenStoreTest` — 7 tests
+- `issue()` returns a token; `consume()` returns the bound user; second `consume()` is empty (single-use)
+- consume after TTL returns empty
+- `revoke(userId)` invalidates every outstanding token for that user
+- expired entries are evicted opportunistically
+- TTL is configurable via `platform.security.refresh-token-ttl`
+- bulk revoke is O(n) but bounded
+- thread-safe under concurrent `issue + consume`
+
+#### `LoginRateLimiterTest` — 6 tests
+- 5th failure within window still allowed; 6th blocked
+- successful login resets the bucket for that `(email, ip)`
+- different IPs are independent
+- different emails are independent
+- bucket expires after 15 min and starts fresh
+- `tryAcquire` is thread-safe under contention
+
+### `iam/tenantadmin/` — Phase 1.8
+
+#### `TenantUsersServiceTest` — 19 tests
+Invite / list / get / update / soft-delete / role-change flows for tenant users, with mocked repos. Verifies:
+- invite hashes the password / consumes a single-use invite token
+- list excludes soft-deleted users
+- update bumps `tv` on role change so old tokens stop working immediately
+- update bumps `tv` on suspend (`SUSPENDED` status)
+- soft-delete bumps `tv` and writes an `AuditEntry`
+- cannot transfer ownership via `update` (that's an explicit endpoint)
+- cross-tenant lookup rejected (path tenant ≠ entity tenant)
+- email change re-checks uniqueness
+
+### `iam/settings/` — Settings module
+
+#### `MqttSettingsHandlerTest` — 8 tests
+- valid MQTT config accepted (`tcp://broker:1883` or `ssl://broker:8883`)
+- rejects missing host
+- rejects port out of `[1, 65535]`
+- rejects invalid scheme (must be `tcp`/`ssl`/`mqtt`/`mqtts`)
+- redacts password in the JSON returned to callers
+- merge with existing settings preserves password when the new payload omits it (PUT-as-PATCH ergonomics)
+- producing `TestPayload` returns the right (host, port, username, password) tuple
+- diff against persisted settings is `null`-safe
+
+#### `DjiSettingsHandlerTest` — 6 tests
+- valid DJI Cloud API config accepted (appKey, appSecret, license, region)
+- rejects missing appKey or appSecret
+- rejects unknown region
+- redacts `appSecret` and `license` in the response
+- merge preserves the secret on partial PUT
+- diff produces a stable canonical form
+
+#### `ConnectionTesterTest` — 12 tests
+The SSRF-guarded reachability probe used by `/settings/{kind}/test`:
+- valid public hostname is accepted and probed (mocked socket)
+- success path returns `TestResult.ok()` with the resolved address + latency
+- DNS failure returns `TestResult.fail(...)` (no exception escapes)
+- TCP connection failure returns `TestResult.fail(...)`
+- loopback (`127.0.0.1`, `::1`) rejected
+- link-local (`169.254.x.x` — covers AWS instance metadata `169.254.169.254`) rejected
+- RFC1918 (`10.x`, `172.16-31.x`, `192.168.x`) rejected
+- CGNAT (`100.64.0.0/10`) rejected
+- IPv6 ULA (`fc00::/7`) rejected
+- multicast / wildcard / unspecified rejected
+- the dev flag `platform.settings.allow-private-test-targets=true` lifts the guard (and ONLY in dev)
+- guard runs after DNS resolution so a public hostname that resolves to a private IP is still rejected
+
+#### `TenantSettingsServiceTest` — 11 tests
+- list returns every kind for the tenant, ordered
+- read a single kind returns the redacted JSON
+- write upserts via `TenantSettingsRepository` and writes an `AuditEntry`
+- write delegates validation + redaction to the registered `SettingsKindHandler` for that kind
+- delete removes the document and writes an `AuditEntry`
+- soft-cleanup uses `try/finally` so the audit always lands even if cleanup blips
+- unknown `kind` returns `404 NotFound`
+- mismatched tenant rejected (path tenant ≠ stored tenant)
+- test endpoint uses `ConnectionTester` with the kind's `TestPayload`
+- merge preserves redacted secret when the inbound JSON omits it
+- service is `@Transactional`-free — Mongo writes are durable on return
+
+### `iam/tokens/` — Phase 1.9
+
+#### `InMemorySingleUseTokenStoreTest` — 8 tests
+The store backing password-reset and invite tokens:
+- `issue(purpose, userId, ttl)` returns a one-shot token
+- `consume(token)` returns the bound `(purpose, userId)` and burns the token
+- second `consume` returns empty
+- consume after TTL returns empty
+- purpose mismatch (consuming a reset token as an invite) returns empty
+- TTL is per-token
+- can issue multiple in-flight tokens per user
+- bulk eviction runs lazily on access
+
 ---
 
 ## Integration tests (Failsafe)
@@ -229,6 +346,98 @@ End-to-end through the real `SecurityFilterChain`. Tokens issued by `AccessToken
 Public endpoints stay open after Phase 1.6 tightening:
 - `/.well-known/jwks.json` returns 200 without auth
 - `/actuator/health` returns 200 without auth
+- `/actuator/prometheus` and `/actuator/metrics/**` now require auth (post-1.10 lockdown)
+
+### `iam/auth/`
+
+#### `AuthApiIT` — 11 tests *(needs dev Mongo)*
+End-to-end auth flow over real HTTP + real Mongo:
+- `/login` with right creds → 200 + access/refresh pair + matching `kind`/`opRole`
+- `/login` wrong password → 401, no token
+- `/login` unknown email → 401 (same shape as wrong password — no enumeration)
+- `/login` rate-limited after 5 failures within 15min for `(email, ip)`
+- `/refresh` rotates the refresh token (single-use)
+- `/refresh` with consumed token → 401
+- `/logout` revokes the refresh family for the user
+- `/me` returns the current principal
+- `/switch-tenant` changes the access token's `tid` for an operator
+- access token issued before suspend is rejected after suspend (tv-bump end-to-end)
+- access token issued before role-change is rejected after role-change (tv-bump end-to-end)
+
+#### `EmailFlowsIT` — 5 tests *(needs dev Mongo + MailHog)*
+- `/forgot-password` → MailHog receives an email with a reset URL embedding a single-use token
+- `/reset-password` with that token sets a new password, bumps `tv`, and consumes the token
+- second consume of the same token → 400
+- invite created via admin → MailHog receives an invite email; `/accept-invite` activates the user
+- accept-invite is one-shot (second call → 400)
+
+### `iam/admin/*` — Operator admin surface *(all need dev Mongo)*
+
+#### `TenantsAdminControllerIT` — 10 tests
+List + create + read + update + delete + provisioning. Asserts:
+- `OPERATOR_SUPPORT` can read but cannot create/update/delete (403)
+- `OPERATOR_ADMIN` can do everything
+- create provisions the per-tenant DB via `TenantDatabaseProvisioner`
+- delete deprovisions (drops the per-tenant DB)
+- `?q=` performs case-insensitive substring search on name/id
+- audit entries are written on every state change
+
+#### `OperatorsAdminControllerIT` — 8 tests
+CRUD on operator users, with role gating: `OPERATOR_SUPPORT` reads only, `OPERATOR_ADMIN` mutates. Asserts the bootstrap admin can't be deleted.
+
+#### `OperatorAssignmentsAdminControllerIT` — 6 tests
+Grant + revoke + list operator → tenant assignments. Compound-index uniqueness enforced at the API level (duplicate POST → 409).
+
+#### `AuditAdminControllerIT` — 3 tests
+- list with filters by actor, action, target
+- pagination via `?page=` / `?size=`
+- `OPERATOR_SUPPORT` can read
+
+#### `StatsAdminControllerIT` — 2 tests
+- `GET /admin/api/stats/overview` returns `{tenants, tenantUsers, pendingInvites}` counters
+- numbers update after a tenant + user are created in the same test
+
+#### `AdminTenantUsersControllerIT` — 5 tests
+Admin-side tenant-user CRUD without the `switch-tenant` dance — handlers wrap the call in `TenantContext.callIn(pathTenantId, …)`. Asserts:
+- `OPERATOR_SUPPORT` can read tenant users
+- `OPERATOR_ADMIN` can invite, update, delete
+- tenant context is bound for the duration of the request so the per-tenant DB is reachable
+- updating a tenant user's role from the admin side also bumps that user's `tv`
+
+#### `TenantSettingsAdminControllerIT` — 9 tests
+The extensible settings store via the admin API:
+- list every kind for a tenant
+- PUT MQTT settings → persisted + redacted on read-back
+- PUT DJI settings → persisted + redacted on read-back
+- DELETE removes the document
+- unknown kind → 404
+- `OPERATOR_SUPPORT` can read but not write (403)
+- `POST /{kind}/test` runs `ConnectionTester` and returns latency on success
+- `POST /{kind}/test` returns failure detail without leaking the secret on bad credentials
+- soft-cleanup audit lands even when the cleanup step blips (`try/finally`)
+
+### `iam/tenantadmin/` — Tenant self-service *(all need dev Mongo)*
+
+#### `TenantSelfApiIT` — 14 tests
+`/api/tenant/{me,users}` end-to-end. Seeds owner + admin + editor + viewer + a cross-tenant owner via `IamFixtures` and mints tokens via `JwtTestSupport`. Verifies:
+- every role can `GET /me` and `GET /users`
+- `EDITOR` / `VIEWER` cannot create / update / delete users (403)
+- `TENANT_OWNER` / `ADMIN` can invite + update + soft-delete
+- update + soft-delete bump the target's `tv` so old tokens stop working immediately
+- cross-tenant owner cannot read or write into another tenant (403 from the tenant context guard)
+- soft-deleted users no longer appear in `GET /users`
+- email-uniqueness check on update returns 409 with the right shape
+
+#### `TenantSettingsControllerIT` — 8 tests
+The tenant-side read view of own-tenant settings:
+- `GET /api/tenant/settings` lists every kind, redacted
+- `GET /api/tenant/settings/{kind}` returns one, redacted
+- `EDITOR` / `VIEWER` get 403
+- cross-tenant token cannot read another tenant's settings
+- writes are not exposed on the tenant side — `PUT /api/tenant/settings/{kind}` returns a 4xx (no controller mapping)
+- unknown kind on `GET` returns 404
+- response shape matches the admin-side read view (so the SPA can share a model)
+- secrets are redacted to the same sentinel on both surfaces
 
 ---
 
