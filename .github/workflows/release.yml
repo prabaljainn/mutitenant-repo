@@ -10,9 +10,10 @@ name: release
 # proves the code compiles + tests pass; we only mint images for things
 # that have actually landed on a branch we care about.
 #
-# Multi-arch (linux/amd64 + linux/arm64) so the same tag works on
-# typical x86 servers AND on Apple Silicon / Graviton hosts without a
-# separate build.
+# Single-arch (linux/amd64). The prod VPS is x86_64 and ARM builds via
+# QEMU emulation roughly doubled wall-clock time without a real consumer.
+# Add linux/arm64 back here + re-enable the QEMU step if we ever deploy
+# to Graviton / Apple-Silicon hosts.
 
 on:
   push:
@@ -50,11 +51,6 @@ jobs:
         id: img
         run: echo "name=${IMAGE_NAME,,}/platform" >> "$GITHUB_OUTPUT"
 
-      - name: set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       - name: set up Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -88,7 +84,7 @@ jobs:
         with:
           context: ./platform
           file: ./platform/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -106,7 +102,7 @@ jobs:
             echo "**Tags:**"
             echo "${{ steps.meta.outputs.tags }}" | sed 's/^/- `/' | sed 's/$/`/'
             echo ""
-            echo "**Platforms:** linux/amd64, linux/arm64"
+            echo "**Platforms:** linux/amd64"
             echo ""
             echo "**Pull:**"
             echo '```'

@@ -55,6 +55,10 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
+    # Keep the "Authorize" modal's token across page reloads so a debug
+    # session isn't a constant re-login dance. Stored in browser
+    # localStorage, scoped to the Swagger UI page only.
+    persist-authorization: true
 
 # Mongock: schema migrations for iam_db, executed at startup.
 # Per-tenant DB indexes are NOT managed here — they're created imperatively

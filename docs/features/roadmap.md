@@ -48,7 +48,7 @@ The CloudGCS admin-console prototype review surfaced four missing APIs and six r
 
 | | Status |
 |---|---|
-| Multi-arch GHCR image pipeline (amd64 + arm64) | ✅ `.github/workflows/release.yml` |
+| GHCR image pipeline (linux/amd64) | ✅ `.github/workflows/release.yml` |
 | Production docker-compose (Traefik + Let's Encrypt + Mongo auth + Redis auth) | ✅ `deployment/prod/` |
 | JWT keypair + Mongo keyfile generators | ✅ `scripts/gen-jwt-keys.sh`, `scripts/gen-mongo-keyfile.sh` |
 | End-to-end deployment doc | ✅ `docs/deployment.md` |

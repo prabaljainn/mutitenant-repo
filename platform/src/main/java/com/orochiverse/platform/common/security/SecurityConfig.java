@@ -95,17 +95,10 @@ public class SecurityConfig {
                         // below — no permitAll. The reverse proxy in front of the
                         // platform should additionally block /actuator/(prometheus|metrics)/**
                         // from the public ingress (see docs/deployment.md).
-                        // `/v3/api-docs/**` only matches sub-paths under PathPattern, not
-                        // the bare `/v3/api-docs` that Swagger UI fetches for the spec —
-                        // list both. `.yaml` is the alternate format springdoc serves.
-                        .requestMatchers(
-                                "/v3/api-docs",
-                                "/v3/api-docs.yaml",
-                                "/v3/api-docs/**",
-                                "/swagger-ui/**",
-                                "/swagger-ui.html").permitAll()
+                        .requestMatchers("/v3/api-docs", "/v3/api-docs.yaml", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers(
                                 "/api/auth/login",
+                                "/api/auth/oauth-token",
                                 "/api/auth/refresh",
                                 "/api/auth/forgot-password",
                                 "/api/auth/reset-password",

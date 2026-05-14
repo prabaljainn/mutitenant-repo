@@ -5,25 +5,30 @@ import jakarta.validation.Valid;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.orochiverse.platform.common.security.auth.AuthenticatedUser;
 import com.orochiverse.platform.iam.auth.AuthDtos.AcceptInviteRequest;
 import com.orochiverse.platform.iam.auth.AuthDtos.ForgotPasswordRequest;
 import com.orochiverse.platform.iam.auth.AuthDtos.LoginRequest;
 import com.orochiverse.platform.iam.auth.AuthDtos.LogoutRequest;
+import com.orochiverse.platform.iam.auth.AuthDtos.OAuthTokenResponse;
 import com.orochiverse.platform.iam.auth.AuthDtos.RefreshRequest;
 import com.orochiverse.platform.iam.auth.AuthDtos.ResetPasswordRequest;
 import com.orochiverse.platform.iam.auth.AuthDtos.SwitchTenantRequest;
 import com.orochiverse.platform.iam.auth.AuthDtos.SwitchTenantResponse;
 import com.orochiverse.platform.iam.auth.AuthDtos.TokenResponse;
 
+import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
@@ -76,6 +81,37 @@ public class AuthController {
     @PostMapping("/refresh")
     public TokenResponse refresh(@Valid @RequestBody RefreshRequest req) {
         return auth.refresh(req.refreshToken());
+    }
+
+    /**
+     * RFC 6749 §4.3 password-grant token endpoint, used exclusively by
+     * Swagger UI's built-in OAuth2 client (see
+     * {@link com.orochiverse.platform.common.openapi.OpenApiConfig}).
+     * Accepts {@code application/x-www-form-urlencoded} and returns the
+     * RFC 6749 §5.1 snake_case envelope so Swagger UI's "Authorize" form
+     * can drive the login inline.
+     *
+     * <p>The regular SPA login flow stays on {@code /api/auth/login}
+     * (JSON, camelCase). This endpoint is a thin adapter over the same
+     * {@link AuthService#login} call — it does not introduce a separate
+     * credential or rate-limit path.
+     *
+     * <p>Hidden from the operations list because Swagger UI invokes it
+     * via the OAuth2 security scheme's {@code tokenUrl}, not via the
+     * usual "Try it out" affordance — surfacing it twice would be noise.
+     */
+    @Hidden
+    @PostMapping(value = "/oauth-token", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+    public OAuthTokenResponse oauthToken(@RequestParam("grant_type") String grantType,
+                                         @RequestParam("username") String username,
+                                         @RequestParam("password") String password,
+                                         HttpServletRequest http) {
+        if (!"password".equalsIgnoreCase(grantType)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "unsupported_grant_type: only 'password' is accepted here");
+        }
+        TokenResponse t = auth.login(username, password, clientIp(http));
+        return OAuthTokenResponse.from(t);
     }
 
     /**

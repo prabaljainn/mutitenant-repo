@@ -90,8 +90,11 @@ to GHCR on:
 | push to `main` | `latest`, `main`, `sha-<short>` |
 | push tag `v1.2.3` | `v1.2.3`, `1.2`, `1`, `sha-<short>` |
 
-Multi-arch: every push builds `linux/amd64` + `linux/arm64`. The same
-tag works on an x86 VPS and on a Graviton / Apple-Silicon host.
+Single-arch: every push builds `linux/amd64` only. The prod VPS is
+x86_64; ARM builds via QEMU emulation roughly doubled CI wall-clock
+time without a real consumer. Re-add `linux/arm64` in `release.yml`
+(plus the `setup-qemu-action` step) if we ever deploy to Graviton /
+Apple-Silicon hosts.
 
 **The published name is `ghcr.io/<owner>/<repo>/platform`.** Use that
 in `PLATFORM_IMAGE` in `.env`.

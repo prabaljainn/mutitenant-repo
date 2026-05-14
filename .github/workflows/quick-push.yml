@@ -1,0 +1,116 @@
+name: quick-push
+
+# Fast image build that SKIPS THE TEST SUITE. Use while iterating on
+# infrastructure-adjacent code (compose, traefik, JWT bootstrap, etc.)
+# when waiting on Surefire just to redeploy is the bottleneck.
+#
+# Trigger: manual only (workflow_dispatch). Pick the ref to build from
+# the Actions UI; defaults to the workflow's default branch.
+#
+# Tags published:
+#   - quick                — moving pointer to the latest quick build
+#   - quick-sha-<short>    — immutable per-commit handle
+#
+# Does NOT publish `:latest`, `:main`, `:sha-*`, or any semver tag —
+# those remain owned by release.yml and the gated CI in build.yml. On
+# the VPS, flip to a quick image for an ad-hoc deploy with:
+#
+#   PLATFORM_IMAGE_TAG=quick docker compose pull platform
+#   PLATFORM_IMAGE_TAG=quick docker compose up -d platform
+#
+# Switch back to a tested build by unsetting the override (or setting
+# PLATFORM_IMAGE_TAG=latest in .env).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or commit SHA to build (blank = workflow ref)'
+        required: false
+        default: ''
+
+concurrency:
+  group: quick-push-${{ github.ref }}
+  cancel-in-progress: true   # latest click wins; older quick builds aren't worth finishing
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  image:
+    name: build + push (skip tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: lowercase image name
+        id: img
+        run: echo "name=${IMAGE_NAME,,}/platform" >> "$GITHUB_OUTPUT"
+
+      - name: set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: compute tags + labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.img.outputs.name }}
+          tags: |
+            type=raw,value=quick
+            type=sha,prefix=quick-sha-,format=short
+          labels: |
+            org.opencontainers.image.title=orochiverse-platform
+            org.opencontainers.image.description=Quick (skip-tests) image — NOT gated by CI tests
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=Proprietary
+
+      - name: build + push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./platform
+          file: ./platform/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # SKIP_TESTS=true makes the Dockerfile bypass `./mvnw test` in
+          # the build stage. release.yml never sets this, so the normal
+          # release path still test-gates inside the image.
+          build-args: |
+            SKIP_TESTS=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: publish image summary
+        run: |
+          {
+            echo "### Quick-push image (tests skipped)"
+            echo ""
+            echo "⚠️  This image was built without running the test suite. Do not promote it to long-lived production traffic without separate verification."
+            echo ""
+            echo "**Tags:**"
+            echo "${{ steps.meta.outputs.tags }}" | sed 's/^/- `/' | sed 's/$/`/'
+            echo ""
+            echo "**Deploy on the VPS:**"
+            echo '```'
+            echo "PLATFORM_IMAGE_TAG=quick docker compose pull platform"
+            echo "PLATFORM_IMAGE_TAG=quick docker compose up -d platform"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

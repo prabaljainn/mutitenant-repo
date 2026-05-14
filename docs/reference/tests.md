@@ -20,7 +20,7 @@ Every test class in `platform/src/test/java`, what it verifies, and how to run i
 
 ### CI
 
-`.github/workflows/build.yml` runs `./mvnw verify` on every push to `main` and every PR against a Mongo service container, so both Surefire (199 tests) and Failsafe (113 tests) run in full in CI. `.github/workflows/release.yml` builds a multi-arch (amd64 + arm64) Docker image on every push to `main` and pushes it to GHCR as `ghcr.io/<owner>/<repo>/platform:latest`; tagging `v1.2.3` mints a semver release.
+`.github/workflows/build.yml` runs `./mvnw verify` on every push to `main` and every PR against a Mongo service container, so both Surefire (199 tests) and Failsafe (113 tests) run in full in CI. `.github/workflows/release.yml` builds a `linux/amd64` Docker image on every push to `main` and pushes it to GHCR as `ghcr.io/<owner>/<repo>/platform:latest`; tagging `v1.2.3` mints a semver release.
 
 ---
 

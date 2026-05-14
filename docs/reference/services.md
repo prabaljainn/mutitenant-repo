@@ -56,7 +56,8 @@ The full prod compose — Traefik v3 with Let's Encrypt (TLS-ALPN-01), Mongo 8 w
 | Workflow | When | What it does |
 |---|---|---|
 | `build.yml` | Every push + PR | `./mvnw verify` against Mongo service container; uploads jar + surefire reports. |
-| `release.yml` | Push to `main`, tag `v*` | Builds multi-arch image (linux/amd64 + linux/arm64) via QEMU + buildx, pushes to `ghcr.io/<owner>/<repo>/platform`. `:latest` on `main`, `:v1.2.3` on tags. |
+| `release.yml` | Push to `main`, tag `v*` | Builds `linux/amd64` image via buildx, pushes to `ghcr.io/<owner>/<repo>/platform`. `:latest` on `main`, `:v1.2.3` on tags. |
+| `quick-push.yml` | Manual (workflow_dispatch) | Skip-tests image build for ad-hoc infra-debugging deploys. Tags `:quick` + `:quick-sha-<short>` only — never touches `:latest`. Pull on the VPS with `PLATFORM_IMAGE_TAG=quick docker compose pull platform`. |
 
 The prod compose pulls `ghcr.io/<owner>/<repo>/platform:${PLATFORM_IMAGE_TAG:-latest}`.
 

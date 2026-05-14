@@ -10,7 +10,7 @@ The platform application itself lives under `../platform/`.
 | MongoDB | `mongo:8.0` (LTS) | 27017 | Single-node replica set `rs0` for IAM + per-tenant data |
 | Redis | `redis:7.4-alpine` | 6379 | Refresh tokens, login rate limits, JWT denylist |
 | Mailhog | `mailhog/mailhog` | 1025 (SMTP) / 8025 (UI) | Captures invite + reset emails locally |
-| Traefik | `traefik:v3.1` | 80 / 443 / 8090 | Optional — start with `--profile proxy` |
+| Traefik | `traefik:v3.7` | 80 / 443 / 8090 | Optional — start with `--profile proxy` |
 
 Versions are pinned in `.env` (`MONGO_VERSION`, `REDIS_VERSION`).
 
