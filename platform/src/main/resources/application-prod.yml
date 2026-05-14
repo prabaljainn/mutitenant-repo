@@ -6,11 +6,14 @@ spring:
       uri: ${MONGODB_URI:?MONGODB_URI must be set in production}
     redis:
       url: ${REDIS_URL:?REDIS_URL must be set in production}
+  # SMTP is optional. If SMTP_HOST is unset/empty the app still boots —
+  # invite + password-reset emails fall back to NoOpEmailService (logs the
+  # message instead of sending). Feature endpoints stay functional.
   mail:
-    host: ${SMTP_HOST:?SMTP_HOST must be set in production}
+    host: ${SMTP_HOST:}
     port: ${SMTP_PORT:587}
-    username: ${SMTP_USERNAME:?SMTP_USERNAME must be set in production}
-    password: ${SMTP_PASSWORD:?SMTP_PASSWORD must be set in production}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
     properties:
       mail:
         smtp:
@@ -24,6 +27,15 @@ management:
   endpoint:
     health:
       show-details: never
+  health:
+    # SMTP is non-critical infrastructure. Spring's default MailHealthIndicator
+    # opens a Transport.connect() against the SMTP server on every /actuator/health
+    # call; a flaky or unconfigured relay would flip the aggregate to DOWN and
+    # take the platform out of Traefik's load-balancer rotation. Send-time
+    # failures are already logged-and-continued by AuthService / TenantUsersService
+    # / OperatorsAdminService, so excluding SMTP from health is intentional.
+    mail:
+      enabled: false
 
 logging:
   level:
