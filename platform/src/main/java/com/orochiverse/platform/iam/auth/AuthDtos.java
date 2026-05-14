@@ -3,6 +3,9 @@ package com.orochiverse.platform.iam.auth;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 /**
  * Request and response DTOs for {@code /api/auth/*}. Grouped in one file
  * because they're tiny records that only make sense together — splitting
@@ -67,6 +70,25 @@ public final class AuthDtos {
     public record SwitchTenantResponse(String accessToken, long expiresIn, String tokenType) {
         public static SwitchTenantResponse bearer(String accessToken, long expiresIn) {
             return new SwitchTenantResponse(accessToken, expiresIn, "Bearer");
+        }
+    }
+
+    /**
+     * RFC 6749 §5.1 success response shape (snake_case). Only used by
+     * {@code POST /api/auth/oauth-token}, which exists so Swagger UI's
+     * built-in OAuth2 password-flow client can talk to us without
+     * teaching the rest of the API to speak OAuth. The regular SPA flow
+     * still uses {@link TokenResponse} via {@code /api/auth/login}.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record OAuthTokenResponse(
+            @JsonProperty("access_token") String accessToken,
+            @JsonProperty("token_type") String tokenType,
+            @JsonProperty("expires_in") long expiresIn,
+            @JsonProperty("refresh_token") String refreshToken) {
+
+        public static OAuthTokenResponse from(TokenResponse t) {
+            return new OAuthTokenResponse(t.accessToken(), t.tokenType(), t.expiresIn(), t.refreshToken());
         }
     }
 }
