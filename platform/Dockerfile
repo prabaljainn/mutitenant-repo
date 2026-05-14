@@ -33,7 +33,16 @@ COPY src/ ./src/
 # dev Mongo + MailHog stack which the build container can't provide. CI
 # (.github/workflows/build.yml) runs them via the @EnabledIf gate, which
 # skips them gracefully when Mongo is unreachable.
-RUN ./mvnw -B -ntp test
+#
+# SKIP_TESTS=true is the escape hatch used by .github/workflows/quick-push.yml
+# for ad-hoc infra-debugging deploys. release.yml never passes it, so the
+# normal release path still test-gates inside the image.
+ARG SKIP_TESTS=false
+RUN if [ "$SKIP_TESTS" = "true" ]; then \
+        echo "SKIP_TESTS=true → bypassing ./mvnw test"; \
+    else \
+        ./mvnw -B -ntp test; \
+    fi
 
 # Produce a layered jar so the runtime stage gets better caching.
 RUN ./mvnw -B -ntp -DskipTests package && \
