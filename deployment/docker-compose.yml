@@ -130,7 +130,7 @@ services:
   # unless you explicitly want to test routing/SSL termination).
   # ─────────────────────────────────────────────────────────────────────
   traefik:
-    image: traefik:v3.1
+    image: traefik:v3.7
     container_name: orochiverse-traefik
     restart: unless-stopped
     profiles: ["proxy"]
