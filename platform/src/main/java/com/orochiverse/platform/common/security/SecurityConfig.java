@@ -96,6 +96,16 @@ public class SecurityConfig {
                         // platform should additionally block /actuator/(prometheus|metrics)/**
                         // from the public ingress (see docs/deployment.md).
                         .requestMatchers("/v3/api-docs", "/v3/api-docs.yaml", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                        // /error is Spring Boot's internal error-dispatch endpoint. When any
+                        // controller throws — or any earlier filter rejects — the response is
+                        // RE-dispatched through /error before being written. Without permitAll
+                        // here, that re-dispatch hits the JWT filter again, fails (no token on
+                        // the dispatched request), and JsonAuthenticationEntryPoint overwrites
+                        // the real status/body with "Bearer token missing or invalid" + path=/error.
+                        // That hides every legitimate 4xx from the SPA. Permitting it lets the
+                        // original status (401 for bad creds, 400 for validation, etc.) and the
+                        // real path survive.
+                        .requestMatchers("/error").permitAll()
                         .requestMatchers(
                                 "/api/auth/login",
                                 "/api/auth/oauth-token",

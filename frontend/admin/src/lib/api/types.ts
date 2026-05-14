@@ -1,0 +1,84 @@
+// Wire-level DTOs the admin frontend consumes. Mirrors the contract spelled
+// out in the design brief (CloudGCS - Next.js Prompt.md §5). Where the
+// Spring backend hasn't shipped the endpoint yet, the API client throws a
+// NotImplementedError that the screens surface inline so backend gaps are
+// visible rather than swallowed.
+
+// Plan is intentionally free-form (string) — Spring's TenantsAdminController
+// accepts any non-blank label. We constrain the *picker* to the canonical
+// three in NewTenantModal but the wire type stays open.
+export type Plan = string;
+export type TenantStatus = "trial" | "active" | "suspended" | "archived";
+export type MemberRole = "Owner" | "Admin" | "Editor" | "Viewer";
+export type MemberStatus = "ACTIVE" | "INVITED" | "SUSPENDED" | "DELETED";
+
+export type Tenant = {
+  id: string;
+  name: string;
+  mark: string;            // derived from name client-side; never on the wire
+  plan: Plan;
+  status: TenantStatus;
+  userCount: number | null; // null = "unknown" (the list endpoint doesn't carry it)
+  createdAt: string;       // ISO
+};
+
+export type Member = {
+  userId: string;
+  name: string;            // firstName + lastName, joined
+  email: string;
+  role: MemberRole;
+  status: MemberStatus;
+  joinedAt: string | null; // backend createdAt; null when INVITED
+};
+
+export type MqttSettings = {
+  host: string;
+  port: number;
+  transport: "tls" | "ws" | "tcp";
+  topicPrefix: string;
+  username: string;
+};
+
+export type DjiSettings = {
+  region: "ap" | "us" | "eu";
+  endpoint: string;
+  appKey: string;
+  configured: boolean;
+};
+
+export type DashboardStats = {
+  tenants: number;
+  users: number;
+  pendingInvites: number;
+};
+
+export type ActivityRow = {
+  actor: { name: string; email: string };
+  verb: string;
+  target: string;
+  at: string; // ISO
+};
+
+export type LoginResponse = {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  tokenType: string;
+};
+
+export class ApiError extends Error {
+  constructor(public status: number, message: string, public body?: unknown) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/** Raised when the backend returns 404/501 because the endpoint isn't built yet.
+ * The UI catches these and renders a "Backend not implemented" inline notice with
+ * the path so it's clear what's missing. */
+export class NotImplementedError extends ApiError {
+  constructor(public path: string) {
+    super(501, `Backend endpoint ${path} is not implemented yet`);
+    this.name = "NotImplementedError";
+  }
+}
