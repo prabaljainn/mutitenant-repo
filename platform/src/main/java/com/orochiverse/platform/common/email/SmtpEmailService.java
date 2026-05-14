@@ -5,7 +5,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Component;
@@ -16,15 +16,16 @@ import org.thymeleaf.context.Context;
  * Spring {@link JavaMailSender}-backed implementation. Renders the
  * {@code template} with Thymeleaf in TEXT mode, then ships it via SMTP.
  *
- * <p>Gated on {@code @ConditionalOnProperty(spring.mail.host)} — the same
- * deterministic property-based pattern the rest of the codebase uses for
- * conditional Spring components. {@code @ConditionalOnBean} on a
- * {@code @Component} is fragile because the component-scan order is not
- * guaranteed to follow autoconfig.
+ * <p>Gated on a non-empty {@code spring.mail.host} via
+ * {@code @ConditionalOnExpression}. Plain {@code @ConditionalOnProperty}
+ * matches an empty string as "present" — and prod always passes
+ * {@code SMTP_HOST: ${SMTP_HOST}} through docker-compose, so an unset
+ * value arrives as {@code ""}. Requiring non-empty here is what lets the
+ * {@link NoOpEmailService} fallback engage when SMTP isn't configured.
  *
- * <p>When {@code spring.mail.host} is set (dev / integration / prod),
- * SMTP is the active {@link EmailService}; otherwise the
- * {@link NoOpEmailService} fallback wins via
+ * <p>When {@code spring.mail.host} is a non-empty value (dev / integration
+ * / prod with real relay), SMTP is the active {@link EmailService};
+ * otherwise the {@link NoOpEmailService} fallback wins via
  * {@code @ConditionalOnMissingBean(EmailService.class)} in
  * {@link EmailConfig}.
  *
@@ -34,7 +35,7 @@ import org.thymeleaf.context.Context;
  * The current invite flow logs and continues.
  */
 @Component
-@ConditionalOnProperty(prefix = "spring.mail", name = "host")
+@ConditionalOnExpression("'${spring.mail.host:}' != ''")
 public class SmtpEmailService implements EmailService {
 
     private static final Logger log = LoggerFactory.getLogger(SmtpEmailService.class);

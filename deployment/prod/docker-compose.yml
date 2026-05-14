@@ -90,7 +90,10 @@ services:
       - traefik.http.routers.platform.entrypoints=websecure
       - traefik.http.routers.platform.tls.certresolver=le
       - traefik.http.services.platform.loadbalancer.server.port=8080
-      - traefik.http.services.platform.loadbalancer.healthcheck.path=/actuator/health
+      # Probe Spring's readiness group (governed by readinessState only) rather
+      # than the aggregate /actuator/health — non-critical infra health
+      # indicators (SMTP, etc.) must never deregister the platform from the LB.
+      - traefik.http.services.platform.loadbalancer.healthcheck.path=/actuator/health/readiness
       - traefik.http.services.platform.loadbalancer.healthcheck.interval=30s
 
   # ─────────────────────────────────────────────────────────────────────
