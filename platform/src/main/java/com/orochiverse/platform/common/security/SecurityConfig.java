@@ -95,7 +95,7 @@ public class SecurityConfig {
                         // below — no permitAll. The reverse proxy in front of the
                         // platform should additionally block /actuator/(prometheus|metrics)/**
                         // from the public ingress (see docs/deployment.md).
-                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                        .requestMatchers("/v3/api-docs", "/v3/api-docs.yaml", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers(
                                 "/api/auth/login",
                                 "/api/auth/refresh",
