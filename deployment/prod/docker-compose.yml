@@ -50,6 +50,11 @@ services:
       # env vars to drift.
       MONGODB_URI: mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongodb:27017/iam_db?replicaSet=rs0&authSource=admin
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      # Mail health check disabled while SMTP creds are placeholder —
+      # keeps aggregate /actuator/health UP so the Docker HEALTHCHECK
+      # passes and Traefik routes to the container. Remove once real
+      # SMTP_USERNAME/SMTP_PASSWORD are set in .env.
+      MANAGEMENT_HEALTH_MAIL_ENABLED: "false"
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}
       SMTP_USERNAME: ${SMTP_USERNAME}
@@ -285,7 +290,7 @@ services:
     # an API-1.24 fallback that the modern daemon rejects with "client
     # version 1.24 is too old", and no env-var override is honored by
     # the older SDK — bumping the image is the only working fix.
-    image: traefik:v3.3
+    image: traefik:v3.7
     restart: unless-stopped
     ports:
       - "80:80"
