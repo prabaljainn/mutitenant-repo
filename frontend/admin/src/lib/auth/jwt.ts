@@ -9,7 +9,7 @@ export type AccessClaims = {
   exp: number;
   iss?: string;
   // Orochiverse backend extras
-  kind?: "OPERATOR" | "USER";
+  kind?: "OPERATOR" | "TENANT_USER";
   tv?: number;           // token version
   activeTenantId?: string | null;
   // Design-spec aliases (older shape) — accept either.

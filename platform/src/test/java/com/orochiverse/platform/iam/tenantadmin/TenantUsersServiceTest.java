@@ -363,6 +363,25 @@ class TenantUsersServiceTest {
     }
 
     @Test
+    void delete_scrambles_email_so_a_future_invite_can_reclaim_it() {
+        var u = activeAdmin("u1", TENANT);
+        when(users.findById("u1")).thenReturn(Optional.of(u));
+        when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TenantContext.callIn(TENANT, () -> {
+            service.softDelete("u1", "owner-1");
+            return null;
+        });
+
+        var captor = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(users).save(captor.capture());
+        assertThat(captor.getValue().email())
+                .as("soft-delete must scramble email so the unique index slot is freed")
+                .isNotEqualTo(u.email())
+                .isEqualTo(User.deletedEmailMarker("u1"));
+    }
+
+    @Test
     void delete_returns_404_for_user_in_a_different_tenant() {
         when(users.findById("u-other")).thenReturn(Optional.of(activeAdmin("u-other", OTHER_TENANT)));
 

@@ -288,8 +288,11 @@ public class TenantUsersService {
                     "cannot delete the tenant owner — transfer ownership first");
         }
 
+        // Scramble the email so the unique index slot is freed for a future
+        // invite. The original lives on in the audit metadata below.
+        String originalEmail = existing.email();
         var deleted = new User(
-                existing.id(), existing.email(), existing.passwordHash(),
+                existing.id(), User.deletedEmailMarker(existing.id()), existing.passwordHash(),
                 existing.firstName(), existing.lastName(),
                 UserStatus.DELETED, existing.kind(), null,
                 existing.tenantId(), existing.tenantRole(),
@@ -302,7 +305,7 @@ public class TenantUsersService {
         singleUseTokens.revokeAllForUser(id);
 
         audit.save(auditEntry(AuditAction.TENANT_USER_DELETED, actorUserId, tenantId,
-                Map.of("tenantUserId", id)));
+                Map.of("tenantUserId", id, "email", originalEmail)));
         log.info("tenant user deleted tenant={} id={} actor={}", tenantId, id, actorUserId);
     }
 

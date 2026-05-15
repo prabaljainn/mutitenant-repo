@@ -218,8 +218,11 @@ public class OperatorsAdminService {
             throw new UnprocessableException("operators cannot delete themselves");
         }
 
+        // Scramble the email so the unique index slot is freed for a future
+        // invite. The original lives on in the audit metadata below.
+        String originalEmail = existing.email();
         var deleted = new User(
-                existing.id(), existing.email(), existing.passwordHash(),
+                existing.id(), User.deletedEmailMarker(existing.id()), existing.passwordHash(),
                 existing.firstName(), existing.lastName(),
                 UserStatus.DELETED, existing.kind(), existing.operatorRole(),
                 null, null,
@@ -232,7 +235,7 @@ public class OperatorsAdminService {
         singleUseTokens.revokeAllForUser(id);
 
         audit.save(AuditEntry.of(AuditAction.OPERATOR_DELETED, actorUserId,
-                Map.of("operatorId", id)));
+                Map.of("operatorId", id, "email", originalEmail)));
         log.info("operator deleted id={} actor={}", id, actorUserId);
     }
 

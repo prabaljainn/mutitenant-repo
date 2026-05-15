@@ -25,6 +25,12 @@ type AuthCtx = AuthState & {
   signOut: () => Promise<void>;
   /** Refresh the access token via the backend, returning the new token or null. */
   refresh: () => Promise<string | null>;
+  /**
+   * Persist a token pair obtained from a non-login flow (accept-invite returns
+   * tokens directly). Used by the accept-invite page to "log the user in"
+   * after activation without an extra round-trip through /login.
+   */
+  persistSession: (accessToken: string, refreshToken: string) => void;
 };
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -163,7 +169,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return p;
   }, [persistTokens, signOut]);
 
-  const value: AuthCtx = { accessToken, claims, status, signIn, signOut, refresh };
+  const persistSession = useCallback(
+    (at: string, rt: string) => {
+      persistTokens(at, rt);
+      setStatus("authenticated");
+    },
+    [persistTokens]
+  );
+
+  const value: AuthCtx = { accessToken, claims, status, signIn, signOut, refresh, persistSession };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

@@ -293,4 +293,25 @@ class TenantSelfApiIT {
         var after = users.findById(memberAId).orElseThrow();
         assertThat(after.status()).isEqualTo(UserStatus.DELETED);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void deleting_a_member_frees_their_email_for_re_invite() {
+        // Regression: previously the email stayed on the soft-deleted user
+        // doc, so re-inviting the same address tripped the uniqueness check
+        // (and the unique index) and 409'd.
+        String memberEmail = "member-a-" + suffix + "@a.example";
+
+        var del = IT.exchange(port, "/api/tenant/users/" + memberAId,
+                HttpMethod.DELETE, adminAToken, null, Void.class);
+        assertThat(del.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+        var reinvite = IT.exchange(port, "/api/tenant/users", HttpMethod.POST, adminAToken,
+                Map.of("email", memberEmail,
+                        "firstName", "Member", "lastName", "Again", "role", "MEMBER"),
+                Map.class);
+
+        assertThat(reinvite.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        createdInviteId = (String) reinvite.getBody().get("id");
+    }
 }
