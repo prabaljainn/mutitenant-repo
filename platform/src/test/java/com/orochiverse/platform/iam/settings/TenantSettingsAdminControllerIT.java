@@ -62,7 +62,7 @@ class TenantSettingsAdminControllerIT {
         adminToken = JwtTestSupport.token(issuer, admin);
 
         tenantId = "set" + suffix;
-        tenants.save(Tenant.newTrial(tenantId, "Set " + suffix, "STARTER", adminId));
+        tenants.save(Tenant.create(tenantId, "Set " + suffix, adminId));
     }
 
     @AfterEach

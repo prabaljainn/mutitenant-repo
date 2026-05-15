@@ -6,7 +6,6 @@ import org.springframework.stereotype.Service;
 import com.orochiverse.platform.common.security.principals.UserKind;
 import com.orochiverse.platform.iam.admin.stats.StatsDtos.OverviewStats;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
-import com.orochiverse.platform.iam.tenants.TenantStatus;
 import com.orochiverse.platform.iam.users.UserRepository;
 import com.orochiverse.platform.iam.users.UserStatus;
 
@@ -33,11 +32,7 @@ public class StatsAdminService {
     }
 
     public OverviewStats overview() {
-        // "Tenants" on the dashboard means active workspaces — TRIAL and
-        // ACTIVE count, ARCHIVED doesn't (the data is gone anyway).
-        long tenantCount = tenants.countByStatus(TenantStatus.ACTIVE)
-                + tenants.countByStatus(TenantStatus.TRIAL)
-                + tenants.countByStatus(TenantStatus.SUSPENDED);
+        long tenantCount = tenants.countByDeletedAtIsNull();
 
         long tenantUserCount = users.countByKindAndStatus(UserKind.TENANT_USER, UserStatus.ACTIVE)
                 + users.countByKindAndStatus(UserKind.TENANT_USER, UserStatus.INVITED)

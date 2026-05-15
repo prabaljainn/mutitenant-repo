@@ -58,15 +58,13 @@ class StatsAdminControllerIT {
         adminToken = JwtTestSupport.token(issuer, admin);
 
         tenantId = "stats" + suffix;
-        tenants.save(Tenant.newTrial(tenantId, "Stats " + suffix, "STARTER", adminId));
+        tenants.save(Tenant.create(tenantId, "Stats " + suffix, adminId));
 
-        // One ACTIVE tenant user and one INVITED tenant user — gives us
-        // deterministic deltas to assert against the live counters.
         activeUserId = IamFixtures.tenantUser("active-" + suffix, tenantId)
-                .role(TenantRole.TENANT_OWNER)
+                .role(TenantRole.ADMIN)
                 .save(users, passwords).id();
         invitedUserId = IamFixtures.tenantUser("invited-" + suffix, tenantId)
-                .role(TenantRole.EDITOR)
+                .role(TenantRole.MEMBER)
                 .status(UserStatus.INVITED)
                 .noPassword()
                 .save(users, passwords).id();
@@ -93,7 +91,6 @@ class StatsAdminControllerIT {
         long tenantUsers  = ((Number) body.get("tenantUsers")).longValue();
         long pending      = ((Number) body.get("pendingInvites")).longValue();
 
-        // We seeded at least 1 tenant, 2 tenant users, and 1 invite.
         assertThat(tenantsCount).isGreaterThanOrEqualTo(1);
         assertThat(tenantUsers).isGreaterThanOrEqualTo(2);
         assertThat(pending).isGreaterThanOrEqualTo(1);

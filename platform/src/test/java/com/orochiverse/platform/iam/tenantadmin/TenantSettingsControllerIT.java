@@ -33,9 +33,8 @@ import com.orochiverse.platform.testsupport.JwtTestSupport;
 import com.orochiverse.platform.testsupport.MongoTestSupport;
 
 /**
- * Tenant-side read view of the settings store. The interesting checks
- * here are the RBAC slices: OWNER and ADMIN can read; EDITOR and
- * VIEWER cannot; and there is no path that lets one tenant ask about
+ * Tenant-side read view of the settings store. RBAC: ADMIN can read,
+ * MEMBER cannot. There is no path that lets one tenant ask about
  * another tenant's settings (the tenant id comes from
  * {@code TenantContext}, not the URL).
  */
@@ -57,55 +56,40 @@ class TenantSettingsControllerIT {
     private String suffix;
     private String tenantA;
     private String tenantB;
-    private String ownerAId;
     private String adminAId;
-    private String editorAId;
-    private String viewerAId;
-    private String ownerBId;
-    private String ownerAToken;
+    private String memberAId;
+    private String adminBId;
     private String adminAToken;
-    private String editorAToken;
-    private String viewerAToken;
-    private String ownerBToken;
+    private String memberAToken;
+    private String adminBToken;
 
     @BeforeEach
     void setUp() {
         suffix = IamFixtures.randomSuffix();
         tenantA = "ta" + suffix;
         tenantB = "tb" + suffix;
-        tenants.save(Tenant.newTrial(tenantA, "A " + suffix, "STARTER", "system"));
-        tenants.save(Tenant.newTrial(tenantB, "B " + suffix, "STARTER", "system"));
+        tenants.save(Tenant.create(tenantA, "A " + suffix, "system"));
+        tenants.save(Tenant.create(tenantB, "B " + suffix, "system"));
 
-        // Four tenant-A users, one per role — covers the entire RBAC matrix.
-        var ownerA = IamFixtures.tenantUser("owner-a-" + suffix, tenantA)
-                .email("owner-a-" + suffix + "@a.example")
-                .role(TenantRole.TENANT_OWNER).save(users, passwords);
         var adminA = IamFixtures.tenantUser("admin-a-" + suffix, tenantA)
                 .email("admin-a-" + suffix + "@a.example")
                 .role(TenantRole.ADMIN).save(users, passwords);
-        var editorA = IamFixtures.tenantUser("editor-a-" + suffix, tenantA)
-                .email("editor-a-" + suffix + "@a.example")
-                .role(TenantRole.EDITOR).save(users, passwords);
-        var viewerA = IamFixtures.tenantUser("viewer-a-" + suffix, tenantA)
-                .email("viewer-a-" + suffix + "@a.example")
-                .role(TenantRole.VIEWER).save(users, passwords);
-        var ownerB = IamFixtures.tenantUser("owner-b-" + suffix, tenantB)
-                .email("owner-b-" + suffix + "@b.example")
-                .role(TenantRole.TENANT_OWNER).save(users, passwords);
+        var memberA = IamFixtures.tenantUser("member-a-" + suffix, tenantA)
+                .email("member-a-" + suffix + "@a.example")
+                .role(TenantRole.MEMBER).save(users, passwords);
+        var adminB = IamFixtures.tenantUser("admin-b-" + suffix, tenantB)
+                .email("admin-b-" + suffix + "@b.example")
+                .role(TenantRole.ADMIN).save(users, passwords);
 
-        ownerAId = ownerA.id();
         adminAId = adminA.id();
-        editorAId = editorA.id();
-        viewerAId = viewerA.id();
-        ownerBId = ownerB.id();
+        memberAId = memberA.id();
+        adminBId = adminB.id();
 
-        ownerAToken = JwtTestSupport.token(issuer, ownerA);
         adminAToken = JwtTestSupport.token(issuer, adminA);
-        editorAToken = JwtTestSupport.token(issuer, editorA);
-        viewerAToken = JwtTestSupport.token(issuer, viewerA);
-        ownerBToken = JwtTestSupport.token(issuer, ownerB);
+        memberAToken = JwtTestSupport.token(issuer, memberA);
+        adminBToken = JwtTestSupport.token(issuer, adminB);
 
-        // Seed MQTT for tenant A only — so we can show that B's OWNER
+        // Seed MQTT for tenant A only — so we can show that B's ADMIN
         // doesn't accidentally see A's config.
         settings.save(TenantSetting.fresh(tenantA, SettingsKind.MQTT, Map.of(
                 "host", "mqtt.a.example",
@@ -117,11 +101,9 @@ class TenantSettingsControllerIT {
 
     @AfterEach
     void cleanup() {
-        users.deleteById(ownerAId);
         users.deleteById(adminAId);
-        users.deleteById(editorAId);
-        users.deleteById(viewerAId);
-        users.deleteById(ownerBId);
+        users.deleteById(memberAId);
+        users.deleteById(adminBId);
         settings.deleteAllByTenantId(tenantA);
         settings.deleteAllByTenantId(tenantB);
         tenants.deleteById(tenantA);
@@ -129,14 +111,14 @@ class TenantSettingsControllerIT {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // OWNER / ADMIN: allowed to read
+    // ADMIN: allowed to read
     // ─────────────────────────────────────────────────────────────────────
 
     @Test
     @SuppressWarnings("unchecked")
-    void owner_can_read_own_tenants_mqtt_and_password_is_masked() {
+    void admin_can_read_own_tenants_mqtt_and_password_is_masked() {
         var resp = IT.exchange(port, "/api/tenant/settings/MQTT",
-                HttpMethod.GET, ownerAToken, null, Map.class);
+                HttpMethod.GET, adminAToken, null, Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         Map<String, Object> body = resp.getBody();
@@ -152,17 +134,9 @@ class TenantSettingsControllerIT {
 
     @Test
     @SuppressWarnings("unchecked")
-    void admin_can_read_own_tenants_settings() {
-        var resp = IT.exchange(port, "/api/tenant/settings/MQTT",
-                HttpMethod.GET, adminAToken, null, Map.class);
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
     void list_returns_only_configured_kinds_for_the_callers_tenant() {
         var resp = IT.exchange(port, "/api/tenant/settings",
-                HttpMethod.GET, ownerAToken, null, Map.class);
+                HttpMethod.GET, adminAToken, null, Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
 
         var items = (List<Map<String, Object>>) resp.getBody().get("items");
@@ -174,46 +148,34 @@ class TenantSettingsControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void unconfigured_kind_returns_blank_record_not_404() {
-        // DJI was never set for tenant A.
         var resp = IT.exchange(port, "/api/tenant/settings/DJI",
-                HttpMethod.GET, ownerAToken, null, Map.class);
+                HttpMethod.GET, adminAToken, null, Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).containsEntry("configured", false);
         assertThat((Map<String, Object>) resp.getBody().get("values")).isEmpty();
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // EDITOR / VIEWER: forbidden
+    // MEMBER: forbidden
     // ─────────────────────────────────────────────────────────────────────
 
     @Test
     @SuppressWarnings("unchecked")
-    void editor_cannot_read_settings() {
+    void member_cannot_read_settings() {
         var resp = IT.exchange(port, "/api/tenant/settings/MQTT",
-                HttpMethod.GET, editorAToken, null, Map.class);
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void viewer_cannot_read_settings() {
-        var resp = IT.exchange(port, "/api/tenant/settings/MQTT",
-                HttpMethod.GET, viewerAToken, null, Map.class);
+                HttpMethod.GET, memberAToken, null, Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Cross-tenant: tenant B owner sees B's settings, never A's
+    // Cross-tenant: tenant B admin sees B's settings, never A's
     // ─────────────────────────────────────────────────────────────────────
 
     @Test
     @SuppressWarnings("unchecked")
-    void another_tenants_owner_does_not_see_my_settings() {
-        // Tenant B has nothing configured — read returns blank for that
-        // tenant, NOT A's data. The id comes from B's JWT tid, not from
-        // any URL the caller can manipulate.
+    void another_tenants_admin_does_not_see_my_settings() {
         var resp = IT.exchange(port, "/api/tenant/settings/MQTT",
-                HttpMethod.GET, ownerBToken, null, Map.class);
+                HttpMethod.GET, adminBToken, null, Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).containsEntry("configured", false);
         assertThat(resp.getBody()).containsEntry("tenantId", tenantB);
@@ -230,11 +192,6 @@ class TenantSettingsControllerIT {
                 HttpMethod.PUT, adminAToken,
                 Map.of("values", Map.of("host", "intruder.example", "port", 1883, "transport", "tls")),
                 Map.class);
-        // Spring returns 401 when no PUT handler matches an authenticated
-        // path under .anyRequest().authenticated() — the entry point fires
-        // instead of MVC's 405. Either way the call is rejected; the test
-        // pins down the rejection, not the precise status code, plus the
-        // proof-by-state that nothing changed in storage.
         assertThat(resp.getStatusCode().is4xxClientError()).isTrue();
         var stored = settings.findByTenantIdAndKind(tenantA, SettingsKind.MQTT).orElseThrow();
         assertThat(stored.values()).containsEntry("host", "mqtt.a.example");

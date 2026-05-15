@@ -9,10 +9,8 @@ import { Icons } from "@/components/icons/icons";
 import { Topbar } from "@/components/shell/Topbar";
 import { NewTenantModal } from "@/components/tenants/NewTenantModal";
 import { BackendStatus } from "@/components/ui/EmptyState";
-import { Chip } from "@/components/ui/Chip";
 import { TenantMark } from "@/components/ui/TenantMark";
 import { tenantsApi } from "@/lib/api/tenants";
-import { type Plan } from "@/lib/api/types";
 import { useToast } from "@/lib/toast/ToastProvider";
 import { formatGB } from "@/lib/utils/date";
 
@@ -26,7 +24,7 @@ export default function TenantsListPage() {
   const tenants = useQuery({ queryKey: ["tenants"], queryFn: tenantsApi.list });
 
   const create = useMutation({
-    mutationFn: (input: { id: string; name: string; plan: Plan }) => tenantsApi.create(input),
+    mutationFn: (input: { id: string; name: string }) => tenantsApi.create(input),
     onSuccess: (created) => {
       qc.setQueryData(["tenants"], (prev: typeof tenants.data) => (prev ?? []).concat(created));
       qc.invalidateQueries({ queryKey: ["tenants", "count"] });
@@ -87,7 +85,6 @@ export default function TenantsListPage() {
                 <tr>
                   <th>Tenant</th>
                   <th style={{ textAlign: "right" }}>Users</th>
-                  <th>Status</th>
                   <th>Created</th>
                   <th style={{ width: 40 }}></th>
                 </tr>
@@ -96,7 +93,7 @@ export default function TenantsListPage() {
                 {filtered.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={4}
                       style={{ padding: 28, textAlign: "center", color: "var(--fg-3)" }}
                     >
                       {q ? `No tenants match "${q}".` : "No tenants yet."}
@@ -114,15 +111,12 @@ export default function TenantsListPage() {
                           <TenantMark mark={tn.mark} size={30} fontSize={11} />
                           <div>
                             <div className="user-cell-name">{tn.name}</div>
-                            <div className="user-cell-email">{tn.plan}</div>
+                            <div className="user-cell-email mono">{tn.id}</div>
                           </div>
                         </div>
                       </td>
                       <td className="mono" style={{ textAlign: "right" }}>
                         {tn.userCount ?? "—"}
-                      </td>
-                      <td>
-                        <Chip variant={tn.status === "active" ? "good" : "warn"}>{tn.status}</Chip>
                       </td>
                       <td className="mono muted">{formatGB(tn.createdAt)}</td>
                       <td onClick={(e) => e.stopPropagation()}>

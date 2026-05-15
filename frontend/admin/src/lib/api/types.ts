@@ -1,23 +1,16 @@
 // Wire-level DTOs the admin frontend consumes. Mirrors the contract spelled
-// out in the design brief (CloudGCS - Next.js Prompt.md §5). Where the
-// Spring backend hasn't shipped the endpoint yet, the API client throws a
-// NotImplementedError that the screens surface inline so backend gaps are
-// visible rather than swallowed.
+// out in the design brief. Where the Spring backend hasn't shipped the
+// endpoint yet, the API client throws a NotImplementedError that the
+// screens surface inline so backend gaps are visible rather than swallowed.
 
-// Plan is intentionally free-form (string) — Spring's TenantsAdminController
-// accepts any non-blank label. We constrain the *picker* to the canonical
-// three in NewTenantModal but the wire type stays open.
-export type Plan = string;
-export type TenantStatus = "trial" | "active" | "suspended" | "archived";
-export type MemberRole = "Owner" | "Admin" | "Editor" | "Viewer";
+export type MemberRole = "Admin" | "Member";
 export type MemberStatus = "ACTIVE" | "INVITED" | "SUSPENDED" | "DELETED";
 
 export type Tenant = {
   id: string;
   name: string;
   mark: string;            // derived from name client-side; never on the wire
-  plan: Plan;
-  status: TenantStatus;
+  ownerUserId: string | null;
   userCount: number | null; // null = "unknown" (the list endpoint doesn't carry it)
   createdAt: string;       // ISO
 };

@@ -1,9 +1,9 @@
 // Translation layer between Spring's actual response shapes and the
 // frontend-friendly DTOs the screens use. Keeps every adaptation in one
-// place so when the backend gains the missing fields (mark, userCount,
-// recent-activity, etc.) we can drop the adapter without touching the UI.
+// place so when the backend gains the missing fields we can drop the
+// adapter without touching the UI.
 
-import type { Member, MemberRole, Tenant, TenantStatus } from "./types";
+import type { Member, MemberRole, Tenant } from "./types";
 import { initials } from "@/lib/utils/initials";
 
 // Raw Spring shapes — match TenantDtos.java / TenantSelfDtos.java exactly.
@@ -11,9 +11,8 @@ import { initials } from "@/lib/utils/initials";
 export type SpringTenant = {
   id: string;
   name: string;
-  status: "TRIAL" | "ACTIVE" | "SUSPENDED" | "ARCHIVED";
-  plan: string;
   settings: Record<string, unknown>;
+  ownerUserId: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -25,7 +24,7 @@ export type SpringTenantUser = {
   firstName: string;
   lastName: string;
   status: "INVITED" | "ACTIVE" | "SUSPENDED" | "DELETED";
-  role: "TENANT_OWNER" | "ADMIN" | "EDITOR" | "VIEWER";
+  role: "ADMIN" | "MEMBER";
   lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -52,8 +51,7 @@ export function toTenant(s: SpringTenant): Tenant {
     id: s.id,
     name: s.name,
     mark: initials(s.name),
-    plan: s.plan,
-    status: s.status.toLowerCase() as TenantStatus,
+    ownerUserId: s.ownerUserId,
     userCount: null,                 // list endpoint doesn't include a count
     createdAt: s.createdAt,
   };
@@ -62,16 +60,12 @@ export function toTenant(s: SpringTenant): Tenant {
 // ─── Member ──────────────────────────────────────────────────────────────────
 
 const ROLE_TO_WIRE: Record<MemberRole, SpringTenantUser["role"]> = {
-  Owner: "TENANT_OWNER",
   Admin: "ADMIN",
-  Editor: "EDITOR",
-  Viewer: "VIEWER",
+  Member: "MEMBER",
 };
 const ROLE_FROM_WIRE: Record<SpringTenantUser["role"], MemberRole> = {
-  TENANT_OWNER: "Owner",
   ADMIN: "Admin",
-  EDITOR: "Editor",
-  VIEWER: "Viewer",
+  MEMBER: "Member",
 };
 
 export function memberRoleToWire(role: MemberRole): SpringTenantUser["role"] {

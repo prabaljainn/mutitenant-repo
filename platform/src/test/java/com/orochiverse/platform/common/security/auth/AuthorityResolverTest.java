@@ -31,11 +31,19 @@ class AuthorityResolverTest {
     }
 
     @Test
-    void tenant_user_emits_kind_and_tenant_role_authorities() {
-        var claims = tenantUserClaims(TenantRole.TENANT_OWNER);
+    void tenant_admin_emits_kind_and_tenant_role_authorities() {
+        var claims = tenantUserClaims(TenantRole.ADMIN);
         var auths = AuthorityResolver.resolve(claims).stream().map(GrantedAuthority::getAuthority).toList();
 
-        assertThat(auths).containsExactlyInAnyOrder("ROLE_TENANT_USER", "ROLE_TENANT_OWNER");
+        assertThat(auths).containsExactlyInAnyOrder("ROLE_TENANT_USER", "ROLE_ADMIN");
+    }
+
+    @Test
+    void tenant_member_emits_kind_and_tenant_role_authorities() {
+        var claims = tenantUserClaims(TenantRole.MEMBER);
+        var auths = AuthorityResolver.resolve(claims).stream().map(GrantedAuthority::getAuthority).toList();
+
+        assertThat(auths).containsExactlyInAnyOrder("ROLE_TENANT_USER", "ROLE_MEMBER");
     }
 
     @Test

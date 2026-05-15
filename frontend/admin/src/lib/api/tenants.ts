@@ -11,7 +11,7 @@ import {
   type SpringTenant,
   type SpringTenantUser,
 } from "./adapters";
-import type { Member, MemberRole, Plan, Tenant } from "./types";
+import type { Member, MemberRole, Tenant } from "./types";
 
 export const tenantsApi = {
   list: async (): Promise<Tenant[]> => {
@@ -22,7 +22,7 @@ export const tenantsApi = {
     const row = await api<SpringTenant>(`/admin/api/tenants/${id}`);
     return toTenant(row);
   },
-  create: async (input: { id: string; name: string; plan: Plan }): Promise<Tenant> => {
+  create: async (input: { id: string; name: string }): Promise<Tenant> => {
     const row = await api<SpringTenant>("/admin/api/tenants", {
       method: "POST",
       json: input,

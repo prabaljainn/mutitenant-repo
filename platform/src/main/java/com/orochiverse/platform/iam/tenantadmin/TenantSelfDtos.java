@@ -9,7 +9,6 @@ import jakarta.validation.constraints.NotNull;
 
 import com.orochiverse.platform.common.security.principals.TenantRole;
 import com.orochiverse.platform.iam.tenants.Tenant;
-import com.orochiverse.platform.iam.tenants.TenantStatus;
 import com.orochiverse.platform.iam.users.User;
 import com.orochiverse.platform.iam.users.UserStatus;
 
@@ -27,9 +26,9 @@ public final class TenantSelfDtos {
     private TenantSelfDtos() {}
 
     /**
-     * {@code role} cannot be {@link TenantRole#TENANT_OWNER} — there is
-     * always exactly one tenant owner per tenant. Ownership transfer is a
-     * separate flow (Phase 1.9+).
+     * Invite a tenant user. {@code role} is either {@code ADMIN} or
+     * {@code MEMBER}. The very first {@code ADMIN} invited to a fresh
+     * tenant is auto-promoted to the tenant's owner.
      */
     public record InviteTenantUserRequest(
             @Email @NotBlank String email,
@@ -38,10 +37,8 @@ public final class TenantSelfDtos {
             @NotNull TenantRole role) {}
 
     /**
-     * Partial update — null fields are left alone. {@code role} cannot be
-     * set to {@link TenantRole#TENANT_OWNER} (use the ownership-transfer
-     * flow). {@code status} cannot be set to {@link UserStatus#DELETED}
-     * (use {@code DELETE /api/tenant/users/{id}}).
+     * Partial update — null fields are left alone. {@code status} cannot
+     * be set to {@link UserStatus#DELETED} (use {@code DELETE /api/tenant/users/{id}}).
      */
     public record UpdateTenantUserRequest(
             String firstName,
@@ -91,12 +88,11 @@ public final class TenantSelfDtos {
         public record MeTenant(
                 String id,
                 String name,
-                TenantStatus status,
-                String plan,
+                String ownerUserId,
                 Map<String, Object> settings) {
 
             public static MeTenant from(Tenant t) {
-                return new MeTenant(t.id(), t.name(), t.status(), t.plan(), t.settings());
+                return new MeTenant(t.id(), t.name(), t.ownerUserId(), t.settings());
             }
         }
     }

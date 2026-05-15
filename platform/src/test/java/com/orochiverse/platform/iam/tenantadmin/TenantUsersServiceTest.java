@@ -27,6 +27,7 @@ import com.orochiverse.platform.iam.admin.common.AdminExceptions.UnprocessableEx
 import com.orochiverse.platform.iam.auth.RefreshTokenStore;
 import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.InviteTenantUserRequest;
 import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.UpdateTenantUserRequest;
+import com.orochiverse.platform.iam.tenants.Tenant;
 import com.orochiverse.platform.iam.users.User;
 import com.orochiverse.platform.iam.users.UserRepository;
 import com.orochiverse.platform.iam.users.UserStatus;
@@ -54,8 +55,6 @@ class TenantUsersServiceTest {
         email = mock(com.orochiverse.platform.common.email.EmailService.class);
         var emailProps = new com.orochiverse.platform.common.email.EmailProperties(
                 "noreply@test.local", null, "http://localhost:8080");
-        // Default: token issuance returns a stub so invite()'s email-send
-        // path doesn't NPE. Tests can override per-method if needed.
         when(singleUseTokens.issue(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.eq(
                         com.orochiverse.platform.iam.tokens.TokenPurpose.INVITE_ACCEPT)))
@@ -70,9 +69,13 @@ class TenantUsersServiceTest {
         org.springframework.beans.factory.ObjectProvider<
                 com.orochiverse.platform.common.security.auth.TokenVersionLookup> tvProvider =
                 mock(org.springframework.beans.factory.ObjectProvider.class);
-        when(tvProvider.getIfAvailable()).thenReturn(null); // test profile: no resolver bean
+        when(tvProvider.getIfAvailable()).thenReturn(null);
         service = new TenantUsersService(users, tenants, refreshTokens, singleUseTokens, audit,
                 email, emailProps, metrics, tvProvider);
+
+        // Default: tenant has no owner. Tests that need an owner override.
+        when(tenants.findByIdAndDeletedAtIsNull(TENANT))
+                .thenReturn(Optional.of(Tenant.create(TENANT, "Acme", "system")));
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -92,7 +95,6 @@ class TenantUsersServiceTest {
         assertThat(resp.role()).isEqualTo(TenantRole.ADMIN);
         assertThat(resp.status()).isEqualTo(UserStatus.INVITED);
 
-        // Verify the user that was actually saved had the right tenant + null password.
         var captor = org.mockito.ArgumentCaptor.forClass(User.class);
         verify(users).save(captor.capture());
         assertThat(captor.getValue().tenantId()).isEqualTo(TENANT);
@@ -101,14 +103,47 @@ class TenantUsersServiceTest {
     }
 
     @Test
-    void invite_rejects_TENANT_OWNER_role() {
-        assertThatThrownBy(() -> TenantContext.callIn(TENANT, () -> service.invite(
-                new InviteTenantUserRequest("o@o", "O", "W", TenantRole.TENANT_OWNER),
-                "owner-1")))
-                .isInstanceOf(UnprocessableException.class)
-                .hasMessageContaining("ownership-transfer");
+    void invite_auto_promotes_first_admin_to_tenant_owner() {
+        when(users.existsByEmailIgnoreCase("first-admin@acme.example")).thenReturn(false);
+        when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        verify(users, never()).save(any());
+        TenantContext.callIn(TENANT, () -> service.invite(
+                new InviteTenantUserRequest("first-admin@acme.example", "First", "Admin",
+                        TenantRole.ADMIN), "operator-1"));
+
+        // The tenant should have been saved back with ownerUserId pointing at
+        // the newly-created user.
+        var tenantCaptor = org.mockito.ArgumentCaptor.forClass(Tenant.class);
+        verify(tenants).save(tenantCaptor.capture());
+        assertThat(tenantCaptor.getValue().ownerUserId()).isNotNull();
+    }
+
+    @Test
+    void invite_does_not_auto_promote_when_tenant_already_has_owner() {
+        when(tenants.findByIdAndDeletedAtIsNull(TENANT))
+                .thenReturn(Optional.of(Tenant.create(TENANT, "Acme", "system").withOwner("preexisting")));
+        when(users.existsByEmailIgnoreCase("second@acme.example")).thenReturn(false);
+        when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TenantContext.callIn(TENANT, () -> service.invite(
+                new InviteTenantUserRequest("second@acme.example", "Second", "Admin",
+                        TenantRole.ADMIN), "operator-1"));
+
+        // No tenant save — owner was already set, so auto-promote is a no-op.
+        verify(tenants, never()).save(any(Tenant.class));
+    }
+
+    @Test
+    void invite_does_not_auto_promote_when_role_is_MEMBER() {
+        when(users.existsByEmailIgnoreCase("member@acme.example")).thenReturn(false);
+        when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TenantContext.callIn(TENANT, () -> service.invite(
+                new InviteTenantUserRequest("member@acme.example", "M", "U",
+                        TenantRole.MEMBER), "operator-1"));
+
+        // No auto-promote: MEMBER doesn't become owner even if tenant is ownerless.
+        verify(tenants, never()).save(any(Tenant.class));
     }
 
     @Test
@@ -116,14 +151,13 @@ class TenantUsersServiceTest {
         when(users.existsByEmailIgnoreCase("dup@x.example")).thenReturn(true);
 
         assertThatThrownBy(() -> TenantContext.callIn(TENANT, () -> service.invite(
-                new InviteTenantUserRequest("dup@x.example", "D", "U", TenantRole.EDITOR),
+                new InviteTenantUserRequest("dup@x.example", "D", "U", TenantRole.MEMBER),
                 "owner-1")))
                 .isInstanceOf(ConflictException.class);
     }
 
     @Test
     void invite_throws_when_tenant_context_is_missing() {
-        // No TenantContext.callIn around it — the service must refuse.
         assertThatThrownBy(() -> service.invite(
                 new InviteTenantUserRequest("alice@acme.example", "A", "B", TenantRole.ADMIN),
                 "owner-1"))
@@ -155,7 +189,6 @@ class TenantUsersServiceTest {
 
     @Test
     void get_returns_404_for_an_OPERATOR_id() {
-        // Even if some operator id collides, never expose them through this surface.
         var op = new User("op-1", "op@orochi", "h", "Op", "User",
                 UserStatus.ACTIVE, UserKind.OPERATOR,
                 com.orochiverse.platform.common.security.principals.OperatorRole.OPERATOR_ADMIN,
@@ -167,19 +200,8 @@ class TenantUsersServiceTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Update — TENANT_OWNER invariants
+    // Update — owner protection
     // ─────────────────────────────────────────────────────────────────────
-
-    @Test
-    void update_cannot_promote_to_TENANT_OWNER() {
-        when(users.findById("u1")).thenReturn(Optional.of(activeAdmin("u1", TENANT)));
-
-        assertThatThrownBy(() -> TenantContext.callIn(TENANT, () -> service.update("u1",
-                new UpdateTenantUserRequest(null, null, TenantRole.TENANT_OWNER, null),
-                "owner-1")))
-                .isInstanceOf(UnprocessableException.class)
-                .hasMessageContaining("TENANT_OWNER");
-    }
 
     @Test
     void update_cannot_set_status_to_DELETED() {
@@ -193,35 +215,49 @@ class TenantUsersServiceTest {
     }
 
     @Test
-    void update_cannot_demote_the_last_active_owner() {
-        var owner = activeOwner("owner-1", TENANT);
+    void update_cannot_demote_the_tenant_owner() {
+        var owner = activeAdmin("owner-1", TENANT);
         when(users.findById("owner-1")).thenReturn(Optional.of(owner));
-        when(users.findAllByTenantIdAndStatus(TENANT, UserStatus.ACTIVE))
-                .thenReturn(List.of(owner));
+        when(tenants.findByIdAndDeletedAtIsNull(TENANT))
+                .thenReturn(Optional.of(Tenant.create(TENANT, "Acme", "system").withOwner("owner-1")));
 
         assertThatThrownBy(() -> TenantContext.callIn(TENANT, () -> service.update("owner-1",
-                new UpdateTenantUserRequest(null, null, TenantRole.ADMIN, null),
+                new UpdateTenantUserRequest(null, null, TenantRole.MEMBER, null),
                 "owner-1")))
                 .isInstanceOf(UnprocessableException.class)
-                .hasMessageContaining("last active TENANT_OWNER");
+                .hasMessageContaining("tenant owner");
 
         verify(users, never()).save(any());
     }
 
     @Test
-    void update_can_demote_an_owner_when_another_owner_exists() {
-        var owner1 = activeOwner("owner-1", TENANT);
-        var owner2 = activeOwner("owner-2", TENANT);
-        when(users.findById("owner-1")).thenReturn(Optional.of(owner1));
-        when(users.findAllByTenantIdAndStatus(TENANT, UserStatus.ACTIVE))
-                .thenReturn(List.of(owner1, owner2));
+    void update_cannot_suspend_the_tenant_owner() {
+        var owner = activeAdmin("owner-1", TENANT);
+        when(users.findById("owner-1")).thenReturn(Optional.of(owner));
+        when(tenants.findByIdAndDeletedAtIsNull(TENANT))
+                .thenReturn(Optional.of(Tenant.create(TENANT, "Acme", "system").withOwner("owner-1")));
+
+        assertThatThrownBy(() -> TenantContext.callIn(TENANT, () -> service.update("owner-1",
+                new UpdateTenantUserRequest(null, null, null, UserStatus.SUSPENDED),
+                "owner-1")))
+                .isInstanceOf(UnprocessableException.class);
+
+        verify(users, never()).save(any());
+    }
+
+    @Test
+    void update_can_demote_a_non_owner_admin_to_member() {
+        var admin = activeAdmin("admin-1", TENANT);
+        when(users.findById("admin-1")).thenReturn(Optional.of(admin));
+        when(tenants.findByIdAndDeletedAtIsNull(TENANT))
+                .thenReturn(Optional.of(Tenant.create(TENANT, "Acme", "system").withOwner("owner-1")));
         when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        var resp = TenantContext.callIn(TENANT, () -> service.update("owner-1",
-                new UpdateTenantUserRequest(null, null, TenantRole.ADMIN, null),
-                "owner-2"));
+        var resp = TenantContext.callIn(TENANT, () -> service.update("admin-1",
+                new UpdateTenantUserRequest(null, null, TenantRole.MEMBER, null),
+                "owner-1"));
 
-        assertThat(resp.role()).isEqualTo(TenantRole.ADMIN);
+        assertThat(resp.role()).isEqualTo(TenantRole.MEMBER);
     }
 
     @Test
@@ -238,7 +274,7 @@ class TenantUsersServiceTest {
 
     @Test
     void update_to_SUSPENDED_bumps_tokenVersion_so_in_flight_access_tokens_are_rejected() {
-        var u = activeAdmin("u1", TENANT);  // starts with tv=0
+        var u = activeAdmin("u1", TENANT);
         when(users.findById("u1")).thenReturn(Optional.of(u));
         when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -248,10 +284,7 @@ class TenantUsersServiceTest {
 
         var captor = org.mockito.ArgumentCaptor.forClass(User.class);
         verify(users).save(captor.capture());
-        assertThat(captor.getValue().tokenVersion())
-                .as("suspending a user must bump tv so the JwtAuthenticationFilter "
-                        + "tv check rejects their in-flight access tokens")
-                .isEqualTo(1);
+        assertThat(captor.getValue().tokenVersion()).isEqualTo(1);
     }
 
     @Test
@@ -261,13 +294,13 @@ class TenantUsersServiceTest {
         when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
         TenantContext.callIn(TENANT, () -> service.update("u1",
-                new UpdateTenantUserRequest(null, null, TenantRole.EDITOR, null),
+                new UpdateTenantUserRequest(null, null, TenantRole.MEMBER, null),
                 "owner-1"));
 
         var captor = org.mockito.ArgumentCaptor.forClass(User.class);
         verify(users).save(captor.capture());
         assertThat(captor.getValue().tokenVersion())
-                .as("demoting ADMIN → EDITOR must bump tv so the old token's "
+                .as("demoting ADMIN → MEMBER must bump tv so the old token's "
                         + "ADMIN authorities don't outlive the change")
                 .isEqualTo(1);
     }
@@ -284,10 +317,7 @@ class TenantUsersServiceTest {
 
         var captor = org.mockito.ArgumentCaptor.forClass(User.class);
         verify(users).save(captor.capture());
-        assertThat(captor.getValue().tokenVersion())
-                .as("a first-name edit doesn't change effective privileges; "
-                        + "force-logging-out the user for cosmetic edits is hostile UX")
-                .isEqualTo(0);
+        assertThat(captor.getValue().tokenVersion()).isEqualTo(0);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -303,15 +333,16 @@ class TenantUsersServiceTest {
     }
 
     @Test
-    void delete_blocks_last_owner() {
-        var owner = activeOwner("owner-1", TENANT);
+    void delete_blocks_tenant_owner() {
+        var owner = activeAdmin("owner-1", TENANT);
         when(users.findById("owner-1")).thenReturn(Optional.of(owner));
-        when(users.findAllByTenantIdAndStatus(TENANT, UserStatus.ACTIVE))
-                .thenReturn(List.of(owner));
+        when(tenants.findByIdAndDeletedAtIsNull(TENANT))
+                .thenReturn(Optional.of(Tenant.create(TENANT, "Acme", "system").withOwner("owner-1")));
 
         assertThatThrownBy(() -> TenantContext.runIn(TENANT,
-                () -> service.softDelete("owner-1", "owner-2")))
-                .isInstanceOf(UnprocessableException.class);
+                () -> service.softDelete("owner-1", "actor-1")))
+                .isInstanceOf(UnprocessableException.class)
+                .hasMessageContaining("tenant owner");
     }
 
     @Test
@@ -327,9 +358,6 @@ class TenantUsersServiceTest {
         var captor = org.mockito.ArgumentCaptor.forClass(User.class);
         verify(users).save(captor.capture());
         assertThat(captor.getValue().status()).isEqualTo(UserStatus.DELETED);
-        // tv bump is the other half of the lockout — refresh-token
-        // revocation kills future logins, tv bump kills the in-flight
-        // access token.
         assertThat(captor.getValue().tokenVersion()).isEqualTo(1);
         verify(refreshTokens, times(1)).revokeAllForUser("u1");
     }
@@ -353,11 +381,5 @@ class TenantUsersServiceTest {
         return new User(id, id + "@" + tenantId + ".example", "h", "F", "L",
                 UserStatus.ACTIVE, UserKind.TENANT_USER, null,
                 tenantId, TenantRole.ADMIN, 0, null, Instant.now(), Instant.now());
-    }
-
-    private static User activeOwner(String id, String tenantId) {
-        return new User(id, id + "@" + tenantId + ".example", "h", "F", "L",
-                UserStatus.ACTIVE, UserKind.TENANT_USER, null,
-                tenantId, TenantRole.TENANT_OWNER, 0, null, Instant.now(), Instant.now());
     }
 }

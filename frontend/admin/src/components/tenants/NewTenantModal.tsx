@@ -5,9 +5,6 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Field } from "@/components/ui/Field";
 import { Modal, ModalBody, ModalFoot } from "@/components/ui/Modal";
 import { suggestTenantId } from "@/lib/api/adapters";
-import type { Plan } from "@/lib/api/types";
-
-const PLANS: Plan[] = ["Starter", "Pro", "Enterprise"];
 
 export function NewTenantModal({
   open,
@@ -17,13 +14,12 @@ export function NewTenantModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onSubmit: (input: { id: string; name: string; plan: Plan }) => void;
+  onSubmit: (input: { id: string; name: string }) => void;
   submitting?: boolean;
 }) {
   const [name, setName] = useState("");
   const [id, setId] = useState("");
   const [idTouched, setIdTouched] = useState(false);
-  const [plan, setPlan] = useState<Plan>("Pro");
   const [err, setErr] = useState("");
 
   // Auto-derive a slug while the user types, until they manually edit the id.
@@ -36,7 +32,7 @@ export function NewTenantModal({
     if (!name.trim()) return setErr("Name is required.");
     if (!/^[a-z0-9][a-z0-9-]{1,23}$/.test(id))
       return setErr("ID must be lowercase letters/numbers/hyphens, 2–24 chars.");
-    onSubmit({ id, name: name.trim(), plan });
+    onSubmit({ id, name: name.trim() });
   }
 
   return (
@@ -87,31 +83,6 @@ export function NewTenantModal({
           >
             <input className="input mono" readOnly value="cloudgcs.io" />
           </Field>
-          <div className="field">
-            <label className="field-label">Plan</label>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, 1fr)",
-                gap: 4,
-                border: "1px solid var(--border)",
-                borderRadius: 6,
-                padding: 4,
-              }}
-            >
-              {PLANS.map((p) => (
-                <button
-                  type="button"
-                  key={p}
-                  className={"btn btn-sm " + (p === plan ? "btn-primary" : "btn-ghost")}
-                  style={{ justifyContent: "center", width: "100%" }}
-                  onClick={() => setPlan(p)}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-          </div>
           {err && (
             <div className="field-hint" style={{ color: "var(--bad)" }}>
               {err}

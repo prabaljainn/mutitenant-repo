@@ -37,10 +37,9 @@ import com.orochiverse.platform.iam.users.UserRepository;
 import com.orochiverse.platform.iam.users.UserStatus;
 
 /**
- * Tenant-user lifecycle for tenant admins/owners. Every operation is
- * scoped to {@link TenantContext#requireCurrent()} — a tenant admin
- * literally cannot see or touch users in another tenant, even if they
- * forge an id in the URL.
+ * Tenant-user lifecycle for tenant admins. Every operation is scoped to
+ * {@link TenantContext#requireCurrent()} — a tenant admin literally cannot
+ * see or touch users in another tenant, even if they forge an id in the URL.
  *
  * <h2>Tenancy isolation</h2>
  * The {@link com.orochiverse.platform.common.security.auth.JwtAuthenticationFilter}
@@ -51,21 +50,22 @@ import com.orochiverse.platform.iam.users.UserStatus;
  * traversal returns {@code 404 not_found} — same as a missing user — so
  * we don't even leak existence across tenants.
  *
- * <h2>TENANT_OWNER invariants</h2>
+ * <h2>Ownership</h2>
  * <ul>
- *   <li>You cannot invite a TENANT_OWNER. Owners are seeded at tenant
- *       creation (Phase 1.7b) or installed via the future
- *       ownership-transfer flow.</li>
- *   <li>You cannot promote a user to TENANT_OWNER via update.</li>
- *   <li>You cannot demote / suspend / delete the last active
- *       TENANT_OWNER — that would orphan the tenant.</li>
+ *   <li>Ownership is a {@code Tenant.ownerUserId} field, not a role. There
+ *       are exactly two roles ({@code ADMIN}, {@code MEMBER}).</li>
+ *   <li>The first {@code ADMIN} invited to a tenant with no owner is
+ *       auto-promoted to owner.</li>
+ *   <li>The user pointed at by {@code ownerUserId} cannot be demoted to
+ *       {@code MEMBER}, suspended, or deleted via this surface — transfer
+ *       ownership first (separate flow, not yet implemented).</li>
  * </ul>
  *
  * <h2>Audit</h2>
  * Mutations write {@link AuditAction#TENANT_USER_INVITED},
  * {@code TENANT_USER_ROLE_CHANGED}, {@code TENANT_USER_SUSPENDED},
  * {@code TENANT_USER_DELETED}. The {@code tenantId} field is set so
- * {@code GET /admin/api/audit?tenantId=...} can filter to a single
+ * {@code GET /admin/api/audit?tenantId=…} can filter to a single
  * tenant's activity.
  */
 @Service
@@ -106,12 +106,6 @@ public class TenantUsersService {
         this.tvResolver = tvResolver;
     }
 
-    /**
-     * Invalidates the cached tv for {@code userId} so the next access-
-     * token check on that user reads the freshly-bumped value rather
-     * than the stale cache entry. ObjectProvider so the test profile
-     * (no Mongo, no resolver bean) is a clean no-op.
-     */
     private void invalidateTvCache(String userId) {
         var resolver = tvResolver.getIfAvailable();
         if (resolver != null) {
@@ -126,14 +120,7 @@ public class TenantUsersService {
     public TenantUserResponse invite(InviteTenantUserRequest req, String actorUserId) {
         String tenantId = TenantContext.requireCurrent();
 
-        if (req.role() == TenantRole.TENANT_OWNER) {
-            throw new UnprocessableException(
-                    "TENANT_OWNER cannot be assigned via invite — use the ownership-transfer flow");
-        }
         if (users.existsByEmailIgnoreCase(req.email())) {
-            // Email is unique across the whole platform (per the iam_db
-            // unique index), so we can't reuse one even from a different
-            // tenant. Surface as 409 either way.
             throw new ConflictException("user with email " + req.email() + " already exists");
         }
 
@@ -152,8 +139,13 @@ public class TenantUsersService {
             throw new ConflictException("user with email " + req.email() + " already exists");
         }
 
-        // Email the invitee with a single-use accept link. Failures don't
-        // roll back the user — admins can re-issue invites manually.
+        // Auto-promote: the first ADMIN invited to an ownerless tenant
+        // becomes its owner. Subsequent ADMINs join as plain admins. The
+        // owner can later be reassigned via a dedicated transfer flow.
+        if (req.role() == TenantRole.ADMIN) {
+            promoteToOwnerIfFirst(tenantId, saved.id());
+        }
+
         SingleUseToken accept = singleUseTokens.issue(id, TokenPurpose.INVITE_ACCEPT);
         try {
             sendTenantUserInviteEmail(saved, tenantId, req.role().name(), accept);
@@ -170,12 +162,19 @@ public class TenantUsersService {
         return TenantUserResponse.from(saved);
     }
 
+    private void promoteToOwnerIfFirst(String tenantId, String userId) {
+        tenants.findByIdAndDeletedAtIsNull(tenantId).ifPresent(t -> {
+            if (t.ownerUserId() == null) {
+                tenants.save(t.withOwner(userId));
+                log.info("auto-promoted first admin as tenant owner: tenant={} user={}",
+                        tenantId, userId);
+            }
+        });
+    }
+
     private void sendTenantUserInviteEmail(User user, String tenantId, String role,
                                            SingleUseToken accept) {
-        // Resolve the tenant name for the email body. The display name is
-        // worth one extra read here so the invite isn't an opaque "you've
-        // been added to <id>".
-        String tenantName = tenants.findById(tenantId).map(Tenant::name).orElse(tenantId);
+        String tenantName = tenants.findByIdAndDeletedAtIsNull(tenantId).map(Tenant::name).orElse(tenantId);
         String acceptUrl = emailProps.baseUrl() + "/accept-invite?token=" + accept.token();
         email.send(user.email(),
                 "You're invited to " + tenantName + " on Orochiverse",
@@ -211,27 +210,22 @@ public class TenantUsersService {
         String tenantId = TenantContext.requireCurrent();
         User existing = loadInCurrentTenantOrThrow(id);
 
-        if (req.role() == TenantRole.TENANT_OWNER) {
-            throw new UnprocessableException(
-                    "promotion to TENANT_OWNER is not supported via update — "
-                            + "use the ownership-transfer flow");
-        }
         if (req.status() == UserStatus.DELETED) {
             throw new UnprocessableException(
                     "use DELETE /api/tenant/users/{id} to soft-delete a tenant user");
         }
 
-        // Owner-protection: any change that takes the last owner out of
-        // play is rejected. We check both role-change-from-owner and
-        // status-change-from-active, in either case for the only owner.
-        boolean removingOwnerStatus = existing.tenantRole() == TenantRole.TENANT_OWNER
-                && (
-                    (req.role() != null && req.role() != TenantRole.TENANT_OWNER) ||
-                    (req.status() != null && req.status() != UserStatus.ACTIVE)
-                );
-        if (removingOwnerStatus && countActiveOwners(tenantId) <= 1) {
+        // Owner-protection: the user pointed at by Tenant.ownerUserId
+        // cannot be demoted to MEMBER, suspended, or otherwise taken out
+        // of active-admin status via this endpoint. Transfer ownership
+        // first (separate flow, not yet implemented).
+        boolean isOwner = id.equals(currentOwnerId(tenantId));
+        boolean wouldDemote = isOwner && req.role() != null && req.role() != TenantRole.ADMIN;
+        boolean wouldDeactivate = isOwner && req.status() != null
+                && req.status() != UserStatus.ACTIVE;
+        if (wouldDemote || wouldDeactivate) {
             throw new UnprocessableException(
-                    "cannot demote or suspend the last active TENANT_OWNER");
+                    "cannot demote or deactivate the tenant owner — transfer ownership first");
         }
 
         String firstName = req.firstName() == null ? existing.firstName() : req.firstName();
@@ -241,10 +235,9 @@ public class TenantUsersService {
 
         // Any change that affects what the user's existing JWT means —
         // role change OR leaving ACTIVE — bumps tokenVersion. Together
-        // with TokenVersionLookup in JwtAuthenticationFilter (Phase
-        // 1.10), this revokes in-flight access tokens immediately
-        // instead of leaving them valid until the 15-minute access TTL
-        // expires. Cosmetic edits (first/last name) do not bump tv.
+        // with TokenVersionLookup in JwtAuthenticationFilter, this revokes
+        // in-flight access tokens immediately rather than waiting out the
+        // 15-minute access TTL. Cosmetic edits do not bump tv.
         boolean roleChanged = req.role() != null && req.role() != existing.tenantRole();
         boolean leftActive  = req.status() != null && req.status() != existing.status()
                                                   && req.status() != UserStatus.ACTIVE;
@@ -290,9 +283,9 @@ public class TenantUsersService {
         }
         User existing = loadInCurrentTenantOrThrow(id);
 
-        if (existing.tenantRole() == TenantRole.TENANT_OWNER
-                && countActiveOwners(tenantId) <= 1) {
-            throw new UnprocessableException("cannot delete the last active TENANT_OWNER");
+        if (id.equals(currentOwnerId(tenantId))) {
+            throw new UnprocessableException(
+                    "cannot delete the tenant owner — transfer ownership first");
         }
 
         var deleted = new User(
@@ -317,11 +310,6 @@ public class TenantUsersService {
     // Helpers
     // ─────────────────────────────────────────────────────────────────────
 
-    /**
-     * Loads a user by id, but only if they exist AND belong to the
-     * current tenant. Returns 404 in either failure mode so we don't
-     * leak cross-tenant existence.
-     */
     private User loadInCurrentTenantOrThrow(String id) {
         String tenantId = TenantContext.requireCurrent();
         User u = users.findById(id)
@@ -332,18 +320,12 @@ public class TenantUsersService {
         return u;
     }
 
-    private long countActiveOwners(String tenantId) {
-        return users.findAllByTenantIdAndStatus(tenantId, UserStatus.ACTIVE).stream()
-                .filter(u -> u.tenantRole() == TenantRole.TENANT_OWNER)
-                .count();
+    private String currentOwnerId(String tenantId) {
+        return tenants.findByIdAndDeletedAtIsNull(tenantId)
+                .map(Tenant::ownerUserId)
+                .orElse(null);
     }
 
-    /**
-     * Builds an audit entry that carries the tenant id so
-     * {@code /admin/api/audit?tenantId=…} surfaces tenant-scoped activity.
-     * The {@link AuditEntry#of(AuditAction, String, Map)} factory doesn't
-     * accept a tenantId; we use the canonical constructor.
-     */
     private static AuditEntry auditEntry(AuditAction action, String actorUserId,
                                          String tenantId, Map<String, Object> metadata) {
         return new AuditEntry(null, Instant.now(), actorUserId, action,

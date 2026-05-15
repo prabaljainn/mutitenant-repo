@@ -205,7 +205,7 @@ class AuthApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void switch_tenant_succeeds_for_assigned_operator_and_new_token_carries_tid() {
-        tenants.save(Tenant.newTrial(tenantId, "Acme " + suffix, "STARTER", operatorId));
+        tenants.save(Tenant.create(tenantId, "Acme " + suffix, operatorId));
         assignments.save(OperatorAssignment.grant(operatorId, tenantId, operatorId));
 
         var login = post("/api/auth/login",
@@ -233,7 +233,7 @@ class AuthApiIT {
     @SuppressWarnings("unchecked")
     void switch_tenant_returns_403_for_unassigned_operator() {
         // No assignment created for tenantId on purpose.
-        tenants.save(Tenant.newTrial(tenantId, "Acme " + suffix, "STARTER", operatorId));
+        tenants.save(Tenant.create(tenantId, "Acme " + suffix, operatorId));
 
         var login = post("/api/auth/login",
                 Map.of("email", operatorEmail, "password", password), Map.class).getBody();

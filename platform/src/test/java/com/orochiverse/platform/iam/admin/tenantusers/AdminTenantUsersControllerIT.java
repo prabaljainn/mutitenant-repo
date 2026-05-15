@@ -61,7 +61,7 @@ class AdminTenantUsersControllerIT {
     private String adminToken;
     private String supportToken;
     private String tenantId;
-    private String tenantUserId;
+    private String ownerUserId;
     private String createdInviteId;
 
     @BeforeEach
@@ -83,19 +83,20 @@ class AdminTenantUsersControllerIT {
         supportToken = JwtTestSupport.token(issuer, support);
 
         tenantId = "atu" + suffix;
-        tenants.save(Tenant.newTrial(tenantId, "Atu " + suffix, "STARTER", adminId));
 
-        // One existing TENANT_OWNER so single-owner rules can be tested.
-        tenantUserId = IamFixtures.tenantUser("own-" + suffix, tenantId)
-                .role(TenantRole.TENANT_OWNER)
+        // Seed an ADMIN tenant user and mark them as the tenant owner —
+        // mirrors what auto-promote-first-admin does in production.
+        ownerUserId = IamFixtures.tenantUser("own-" + suffix, tenantId)
+                .role(TenantRole.ADMIN)
                 .save(users, passwords).id();
+        tenants.save(Tenant.create(tenantId, "Atu " + suffix, adminId).withOwner(ownerUserId));
     }
 
     @AfterEach
     void cleanup() {
         users.deleteById(adminId);
         users.deleteById(supportId);
-        users.deleteById(tenantUserId);
+        users.deleteById(ownerUserId);
         if (createdInviteId != null) users.deleteById(createdInviteId);
         tenants.deleteById(tenantId);
         mongo.getDatabase(TenantId.dbName(tenantId)).drop();
@@ -109,7 +110,7 @@ class AdminTenantUsersControllerIT {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         var ids = resp.getBody().stream()
                 .map(r -> ((Map<String, Object>) r).get("id")).toList();
-        assertThat(ids).contains(tenantUserId);
+        assertThat(ids).contains(ownerUserId);
     }
 
     @Test
@@ -118,7 +119,7 @@ class AdminTenantUsersControllerIT {
         var email = "new-" + suffix + "@a.example";
         var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users",
                 HttpMethod.POST, adminToken,
-                Map.of("email", email, "firstName", "N", "lastName", "U", "role", "EDITOR"),
+                Map.of("email", email, "firstName", "N", "lastName", "U", "role", "MEMBER"),
                 Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
@@ -126,7 +127,7 @@ class AdminTenantUsersControllerIT {
 
         var stored = users.findById(createdInviteId).orElseThrow();
         assertThat(stored.tenantId()).isEqualTo(tenantId);
-        assertThat(stored.passwordHash()).isNull(); // INVITED, no password yet
+        assertThat(stored.passwordHash()).isNull();
     }
 
     @Test
@@ -135,7 +136,7 @@ class AdminTenantUsersControllerIT {
         var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users",
                 HttpMethod.POST, supportToken,
                 Map.of("email", "x-" + suffix + "@a.example",
-                        "firstName", "X", "lastName", "Y", "role", "EDITOR"),
+                        "firstName", "X", "lastName", "Y", "role", "MEMBER"),
                 Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
@@ -150,12 +151,12 @@ class AdminTenantUsersControllerIT {
 
     @Test
     @SuppressWarnings("unchecked")
-    void owner_protection_is_inherited_from_the_tenant_side_service() {
-        // The one TENANT_OWNER cannot be demoted — same rule the tenant-
-        // side service enforces.
-        var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users/" + tenantUserId,
+    void owner_cannot_be_demoted_via_admin_side_either() {
+        // The same owner-protection the tenant-side service enforces fires
+        // here too — the admin route delegates to TenantUsersService.
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users/" + ownerUserId,
                 HttpMethod.PUT, adminToken,
-                Map.of("role", "ADMIN"), Map.class);
+                Map.of("role", "MEMBER"), Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
     }
 }

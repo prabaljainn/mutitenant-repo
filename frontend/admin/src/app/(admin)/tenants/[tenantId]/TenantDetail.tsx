@@ -21,10 +21,7 @@ import { formatGB } from "@/lib/utils/date";
 
 type TabKey = "overview" | "members" | "settings";
 
-// Spring's TENANT_OWNER role is set only via the ownership-transfer flow,
-// not via /admin/api/tenants/{id}/users — so it's omitted from the invite
-// picker here. Existing Owners still render correctly in the table.
-const INVITE_ROLES: MemberRole[] = ["Admin", "Editor", "Viewer"];
+const INVITE_ROLES: MemberRole[] = ["Admin", "Member"];
 
 export function TenantDetail({ tenantId }: { tenantId: string }) {
   const qc = useQueryClient();
@@ -91,6 +88,7 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
 
   const t = tenant.data!;
   const memberCount = members.data?.length ?? 0;
+  const ownerName = members.data?.find((m) => m.userId === t.ownerUserId)?.name ?? null;
 
   const tabs: TabDef<TabKey>[] = [
     { key: "overview", label: "Overview" },
@@ -152,13 +150,8 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
                   </button>
                 </div>
               )}
-              <div className="page-sub mono">
-                {t.id} · {t.plan}
-              </div>
+              <div className="page-sub mono">{t.id}</div>
             </div>
-            <span style={{ marginLeft: 10 }}>
-              <Chip variant={t.status === "active" ? "good" : "warn"}>{t.status}</Chip>
-            </span>
           </div>
         </div>
 
@@ -171,8 +164,7 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
               <CardBody>
                 <KV
                   items={[
-                    { label: "Plan", value: t.plan },
-                    { label: "Status", value: t.status },
+                    { label: "Owner", value: ownerName ?? (t.ownerUserId ? t.ownerUserId : "— not yet assigned") },
                     { label: "Members", value: memberCount },
                     { label: "Created", value: formatGB(t.createdAt), mono: true },
                     { label: "Tenant ID", value: t.id, mono: true },
@@ -199,7 +191,7 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
           </div>
         )}
 
-        {tab === "members" && <MembersTab tenantId={tenantId} />}
+        {tab === "members" && <MembersTab tenantId={tenantId} ownerUserId={t.ownerUserId} />}
 
         {tab === "settings" && <SettingsCards tenantId={tenantId} />}
       </div>
@@ -207,7 +199,7 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
   );
 }
 
-function MembersTab({ tenantId }: { tenantId: string }) {
+function MembersTab({ tenantId, ownerUserId }: { tenantId: string; ownerUserId: string | null }) {
   const qc = useQueryClient();
   const { notify } = useToast();
   const members = useQuery({
@@ -218,7 +210,7 @@ function MembersTab({ tenantId }: { tenantId: string }) {
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [role, setRole] = useState<MemberRole>("Editor");
+  const [role, setRole] = useState<MemberRole>("Member");
   const [err, setErr] = useState("");
 
   const invite = useMutation({
@@ -298,36 +290,40 @@ function MembersTab({ tenantId }: { tenantId: string }) {
                   </td>
                 </tr>
               ) : (
-                list.map((m) => (
-                  <tr key={m.userId}>
-                    <td>
-                      <div className="user-cell">
-                        <Avatar name={m.name} />
-                        <div>
-                          <div className="user-cell-name">{m.name}</div>
-                          <div className="user-cell-email">{m.email}</div>
+                list.map((m) => {
+                  const isOwner = m.userId === ownerUserId;
+                  return (
+                    <tr key={m.userId}>
+                      <td>
+                        <div className="user-cell">
+                          <Avatar name={m.name} />
+                          <div>
+                            <div className="user-cell-name">{m.name}</div>
+                            <div className="user-cell-email">{m.email}</div>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td>
-                      <Chip variant={m.role === "Owner" ? "info" : "muted"} dot={false}>
-                        {m.role}
-                      </Chip>
-                    </td>
-                    <td className="mono muted">
-                      {m.status === "INVITED" ? "Invited" : formatGB(m.joinedAt)}
-                    </td>
-                    <td>
-                      <button
-                        className="btn btn-ghost btn-icon btn-sm"
-                        onClick={() => remove.mutate(m.userId)}
-                        title="Remove"
-                      >
-                        <Icon d={Icons.trash} size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                      <td>
+                        <Chip variant={isOwner ? "info" : "muted"} dot={false}>
+                          {isOwner ? `${m.role} · Owner` : m.role}
+                        </Chip>
+                      </td>
+                      <td className="mono muted">
+                        {m.status === "INVITED" ? "Invited" : formatGB(m.joinedAt)}
+                      </td>
+                      <td>
+                        <button
+                          className="btn btn-ghost btn-icon btn-sm"
+                          onClick={() => remove.mutate(m.userId)}
+                          title="Remove"
+                          disabled={isOwner}
+                        >
+                          <Icon d={Icons.trash} size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

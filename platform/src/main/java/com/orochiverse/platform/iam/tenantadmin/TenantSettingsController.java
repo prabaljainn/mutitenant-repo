@@ -16,37 +16,32 @@ import com.orochiverse.platform.iam.settings.TenantSettingsService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
- * Tenant-side read view of the per-tenant settings store. Lets a
- * TENANT_OWNER or ADMIN confirm how their MQTT / DJI / future
- * integrations are configured — without exposing the values to lower
- * roles (EDITOR / VIEWER) or to other tenants.
+ * Tenant-side read view of the per-tenant settings store. Lets a tenant
+ * ADMIN confirm how their MQTT / DJI / future integrations are configured
+ * — without exposing the values to MEMBER users or to other tenants.
  *
  * <h2>What this surface intentionally omits</h2>
  * No PUT, DELETE, or {@code /test}. Settings remain operator-owned:
  * Orochiverse staff configure the broker on the tenant's behalf, the
- * tenant verifies. If a credential needs rotating, the operator does
- * it. Adding tenant-side writes is a small follow-up if self-service
- * becomes a requirement.
+ * tenant verifies. Adding tenant-side writes is a small follow-up if
+ * self-service becomes a requirement.
  *
  * <h2>Tenancy isolation</h2>
  * The tenant id comes from {@link TenantContext#requireCurrent()},
  * which is populated by the JWT filter from the verified {@code tid}
  * claim. There is no path-param tenant id, so a tenant user
  * structurally cannot ask about another tenant's settings via this
- * controller. The operator-side
- * {@link com.orochiverse.platform.iam.settings.TenantSettingsAdminController}
- * remains the cross-tenant entry point — gated on {@code ROLE_OPERATOR}.
+ * controller.
  *
  * <h2>Secrets</h2>
  * Same masking as the operator side: the response omits secret values
- * and lists secret key names in {@code secrets[]}. Tenant admins know
- * a password is set; they never see it.
+ * and lists secret key names in {@code secrets[]}.
  */
 @RestController
 @RequestMapping("/api/tenant/settings")
 @ConditionalOnProperty(prefix = "spring.data.mongodb", name = "uri")
 @Tag(name = "Tenant: Settings", description = "Read-only view of the calling "
-        + "tenant's integration settings (MQTT, DJI, …). Owner / Admin only; "
+        + "tenant's integration settings (MQTT, DJI, …). Admin only; "
         + "secrets stay masked.")
 public class TenantSettingsController {
 
@@ -57,13 +52,13 @@ public class TenantSettingsController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('TENANT_OWNER', 'ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public SettingsListResponse list() {
         return new SettingsListResponse(service.list(TenantContext.requireCurrent()));
     }
 
     @GetMapping("/{kind}")
-    @PreAuthorize("hasAnyRole('TENANT_OWNER', 'ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public SettingsResponse get(@PathVariable SettingsKind kind) {
         return service.get(TenantContext.requireCurrent(), kind);
     }
