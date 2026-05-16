@@ -20,7 +20,6 @@ public final class TenantDtos {
     private TenantDtos() {}
 
     public record CreateTenantRequest(
-            @NotBlank String id,
             @NotBlank String name) {}
 
     /**

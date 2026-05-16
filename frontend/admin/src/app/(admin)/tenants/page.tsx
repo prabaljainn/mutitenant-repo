@@ -24,7 +24,7 @@ export default function TenantsListPage() {
   const tenants = useQuery({ queryKey: ["tenants"], queryFn: tenantsApi.list });
 
   const create = useMutation({
-    mutationFn: (input: { id: string; name: string }) => tenantsApi.create(input),
+    mutationFn: (input: { name: string }) => tenantsApi.create(input),
     onSuccess: (created) => {
       qc.setQueryData(["tenants"], (prev: typeof tenants.data) => (prev ?? []).concat(created));
       qc.invalidateQueries({ queryKey: ["tenants", "count"] });

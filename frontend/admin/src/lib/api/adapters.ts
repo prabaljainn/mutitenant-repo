@@ -127,16 +127,3 @@ export function fromDji(d: DjiSettings): Record<string, unknown> {
   };
 }
 
-// ─── Tenant id slug ──────────────────────────────────────────────────────────
-
-/** Default tenant id from a display name. Spring validates the slug against
- *  a regex (lowercase alphanumeric + hyphen), so we mirror that constraint.
- *  The user can override the suggestion in the New tenant modal. */
-export function suggestTenantId(name: string): string {
-  return name
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 24);
-}

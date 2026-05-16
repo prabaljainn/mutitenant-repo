@@ -1,8 +1,11 @@
 package com.orochiverse.platform.iam.admin.tenants;
 
+import java.security.SecureRandom;
+import java.text.Normalizer;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.slf4j.Logger;
@@ -15,7 +18,6 @@ import com.orochiverse.platform.common.audit.AuditAction;
 import com.orochiverse.platform.common.audit.AuditEntry;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
 import com.orochiverse.platform.common.tenant.TenantDatabaseProvisioner;
-import com.orochiverse.platform.common.tenant.TenantId;
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.ConflictException;
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.NotFoundException;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.CreateTenantRequest;
@@ -31,9 +33,8 @@ import com.orochiverse.platform.iam.tenants.TenantRepository;
  *
  * <h2>Create flow</h2>
  * <ol>
- *   <li>Validate id format (deferred to {@link Tenant}'s constructor).</li>
- *   <li>Reject if id already exists in {@code iam_db.tenants} so the
- *       caller gets a clean 409 instead of a generic duplicate-key error.</li>
+ *   <li>Derive the id from {@code name} (slugify, append a short random
+ *       suffix if the bare slug is taken). The id is not user-supplied.</li>
  *   <li>Save the tenant document with {@code ownerUserId=null}; the first
  *       ADMIN invited gets auto-promoted later.</li>
  *   <li>Provision the per-tenant Mongo DB.</li>
@@ -80,17 +81,15 @@ public class TenantsAdminService {
     }
 
     public TenantResponse create(CreateTenantRequest req, String actorUserId) {
-        TenantId.requireValid(req.id());
-
-        if (tenants.existsById(req.id())) {
-            throw new ConflictException("tenant " + req.id() + " already exists");
-        }
+        String id = generateUniqueId(req.name());
 
         Tenant saved;
         try {
-            saved = tenants.save(Tenant.create(req.id(), req.name(), actorUserId));
+            saved = tenants.save(Tenant.create(id, req.name(), actorUserId));
         } catch (DuplicateKeyException e) {
-            throw new ConflictException("tenant " + req.id() + " already exists");
+            // A concurrent create grabbed the slot between our existsById
+            // probe and save. Caller can just retry.
+            throw new ConflictException("could not allocate a unique tenant id, retry");
         }
 
         provisioner.provision(saved.id());
@@ -173,5 +172,49 @@ public class TenantsAdminService {
     private Tenant loadOrThrow(String id) {
         return tenants.findByIdAndDeletedAtIsNull(id)
                 .orElseThrow(() -> new NotFoundException("tenant " + id + " not found"));
+    }
+
+    // ─── Tenant-id generation ──────────────────────────────────────────────
+    //
+    // The id is opaque to admins now; we derive it from the display name.
+    // It still has to satisfy TenantId.VALID (lowercase alnum + `-`, ≤50)
+    // because it becomes a Mongo DB name and JWT claim.
+
+    private static final int MAX_BASE_LENGTH = 40;
+    private static final int MAX_SUFFIX_ATTEMPTS = 8;
+    private static final int SUFFIX_LENGTH = 4;
+    // Avoids look-alikes (0/o, 1/l) so ids stay readable in URLs and logs.
+    private static final String SUFFIX_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789";
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    String generateUniqueId(String name) {
+        String base = slugify(name);
+        if (base.isEmpty()) base = "tenant";
+        if (!tenants.existsById(base)) return base;
+        for (int i = 0; i < MAX_SUFFIX_ATTEMPTS; i++) {
+            String candidate = base + "-" + randomSuffix();
+            if (!tenants.existsById(candidate)) return candidate;
+        }
+        throw new ConflictException("could not allocate a unique tenant id, retry");
+    }
+
+    static String slugify(String name) {
+        if (name == null) return "";
+        String s = Normalizer.normalize(name, Normalizer.Form.NFKD)
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("^-+|-+$", "");
+        if (s.length() > MAX_BASE_LENGTH) {
+            s = s.substring(0, MAX_BASE_LENGTH).replaceAll("-+$", "");
+        }
+        return s;
+    }
+
+    private static String randomSuffix() {
+        var sb = new StringBuilder(SUFFIX_LENGTH);
+        for (int i = 0; i < SUFFIX_LENGTH; i++) {
+            sb.append(SUFFIX_ALPHABET.charAt(RANDOM.nextInt(SUFFIX_ALPHABET.length())));
+        }
+        return sb.toString();
     }
 }

@@ -2,6 +2,7 @@ package com.orochiverse.platform.iam.admin.tenants;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -52,7 +53,9 @@ class TenantsAdminControllerIT {
     private String supportId;
     private String adminToken;
     private String supportToken;
-    private String tenantId;
+    // Tracks every tenant created during a test so @AfterEach can clean
+    // up the docs and per-tenant DBs even though the id is server-assigned.
+    private final List<String> createdTenantIds = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -71,15 +74,28 @@ class TenantsAdminControllerIT {
         supportId = support.id();
         adminToken = JwtTestSupport.token(issuer, admin);
         supportToken = JwtTestSupport.token(issuer, support);
-        tenantId = "p17b" + suffix;
+        createdTenantIds.clear();
     }
 
     @AfterEach
     void cleanup() {
         users.deleteById(adminId);
         users.deleteById(supportId);
-        tenants.deleteById(tenantId);
-        mongo.getDatabase(TenantId.dbName(tenantId)).drop();
+        for (String id : createdTenantIds) {
+            tenants.deleteById(id);
+            mongo.getDatabase(TenantId.dbName(id)).drop();
+        }
+    }
+
+    /** Creates a tenant via the API and records its server-assigned id. */
+    @SuppressWarnings("unchecked")
+    private String createTenant(String token, String name) {
+        var resp = IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, token,
+                Map.of("name", name), Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        String id = (String) resp.getBody().get("id");
+        createdTenantIds.add(id);
+        return id;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -90,42 +106,48 @@ class TenantsAdminControllerIT {
     @SuppressWarnings("unchecked")
     void admin_can_create_a_tenant_and_db_is_provisioned() {
         var resp = IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme " + suffix), Map.class);
+                Map.of("name", "Acme " + suffix), Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        assertThat(resp.getBody()).containsEntry("id", tenantId);
+        String id = (String) resp.getBody().get("id");
+        createdTenantIds.add(id);
+
+        // Slug derived from name, lowercase + hyphenated, valid for Mongo.
+        assertThat(id).matches("^[a-z0-9][a-z0-9-]*$");
+        assertThat(id).startsWith("acme-");
         assertThat(resp.getBody()).containsEntry("ownerUserId", null);
 
         var dbNames = mongo.listDatabaseNames().into(new java.util.ArrayList<>());
-        assertThat(dbNames).contains(TenantId.dbName(tenantId));
+        assertThat(dbNames).contains(TenantId.dbName(id));
+    }
+
+    @Test
+    void duplicate_name_yields_distinct_ids() {
+        // Same display name twice — server should slugify both, then
+        // disambiguate the second with a random suffix instead of 409ing.
+        String first = createTenant(adminToken, "Acme " + suffix);
+        String second = createTenant(adminToken, "Acme " + suffix);
+
+        assertThat(second).isNotEqualTo(first);
+        // Both share the slug base; the second gets a -xxxx suffix.
+        assertThat(first).startsWith("acme-");
+        assertThat(second).startsWith(first + "-");
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void duplicate_create_returns_409() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme"), Map.class);
-
-        var dup = IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme"), Map.class);
-
-        assertThat(dup.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-        assertThat(dup.getBody()).containsEntry("error", "conflict");
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void invalid_tenant_id_returns_400() {
+    void blank_name_returns_400() {
         var resp = IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", "Bad Id With Spaces", "name", "Acme"), Map.class);
+                Map.of("name", ""), Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     void support_cannot_create_a_tenant() {
         var resp = IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, supportToken,
-                Map.of("id", tenantId, "name", "Acme"), Map.class);
+                Map.of("name", "Acme"), Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
@@ -136,8 +158,7 @@ class TenantsAdminControllerIT {
 
     @Test
     void list_visible_to_support_role() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme"), Map.class);
+        createTenant(adminToken, "Acme " + suffix);
 
         var resp = IT.exchange(port, "/admin/api/tenants",
                 HttpMethod.GET, supportToken, null, List.class);
@@ -149,8 +170,7 @@ class TenantsAdminControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void list_filters_by_q_substring_case_insensitive() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Skyhawk-" + suffix), Map.class);
+        createTenant(adminToken, "Skyhawk-" + suffix);
 
         var hits = IT.exchange(port, "/admin/api/tenants?q=skyhawk",
                 HttpMethod.GET, supportToken, null, List.class);
@@ -183,10 +203,9 @@ class TenantsAdminControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void admin_can_rename_a_tenant() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme"), Map.class);
+        String id = createTenant(adminToken, "Acme " + suffix);
 
-        var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId,
+        var resp = IT.exchange(port, "/admin/api/tenants/" + id,
                 HttpMethod.PUT, adminToken,
                 Map.of("name", "Acme Renamed"), Map.class);
 
@@ -196,10 +215,9 @@ class TenantsAdminControllerIT {
 
     @Test
     void support_cannot_update() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme"), Map.class);
+        String id = createTenant(adminToken, "Acme " + suffix);
 
-        var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId,
+        var resp = IT.exchange(port, "/admin/api/tenants/" + id,
                 HttpMethod.PUT, supportToken, Map.of("name", "Hijacked"), Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
@@ -212,31 +230,29 @@ class TenantsAdminControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void admin_can_soft_delete_and_db_is_dropped() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme"), Map.class);
+        String id = createTenant(adminToken, "Acme " + suffix);
 
-        var del = IT.exchange(port, "/admin/api/tenants/" + tenantId,
+        var del = IT.exchange(port, "/admin/api/tenants/" + id,
                 HttpMethod.DELETE, adminToken, null, Void.class);
 
         assertThat(del.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
 
         // deletedAt is stamped, DB gone, filtered findById sees nothing.
-        var raw = tenants.findById(tenantId).orElseThrow();
+        var raw = tenants.findById(id).orElseThrow();
         assertThat(raw.deletedAt()).isNotNull();
-        assertThat(tenants.findByIdAndDeletedAtIsNull(tenantId)).isEmpty();
+        assertThat(tenants.findByIdAndDeletedAtIsNull(id)).isEmpty();
         var dbNames = mongo.listDatabaseNames().into(new java.util.ArrayList<>());
-        assertThat(dbNames).doesNotContain(TenantId.dbName(tenantId));
+        assertThat(dbNames).doesNotContain(TenantId.dbName(id));
     }
 
     @Test
     @SuppressWarnings("unchecked")
     void soft_deleted_tenants_are_hidden_from_list_and_get() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme"), Map.class);
-        IT.exchange(port, "/admin/api/tenants/" + tenantId,
+        String id = createTenant(adminToken, "Acme " + suffix);
+        IT.exchange(port, "/admin/api/tenants/" + id,
                 HttpMethod.DELETE, adminToken, null, Void.class);
 
-        var get = IT.exchange(port, "/admin/api/tenants/" + tenantId,
+        var get = IT.exchange(port, "/admin/api/tenants/" + id,
                 HttpMethod.GET, supportToken, null, Map.class);
         assertThat(get.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
 
@@ -245,6 +261,6 @@ class TenantsAdminControllerIT {
         assertThat(list.getStatusCode()).isEqualTo(HttpStatus.OK);
         List<String> ids = ((List<Map<String, Object>>) list.getBody()).stream()
                 .map(r -> (String) r.get("id")).toList();
-        assertThat(ids).doesNotContain(tenantId);
+        assertThat(ids).doesNotContain(id);
     }
 }

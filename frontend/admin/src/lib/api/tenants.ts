@@ -22,7 +22,7 @@ export const tenantsApi = {
     const row = await api<SpringTenant>(`/admin/api/tenants/${id}`);
     return toTenant(row);
   },
-  create: async (input: { id: string; name: string }): Promise<Tenant> => {
+  create: async (input: { name: string }): Promise<Tenant> => {
     const row = await api<SpringTenant>("/admin/api/tenants", {
       method: "POST",
       json: input,
