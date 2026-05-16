@@ -133,6 +133,17 @@ public class AdminTenantUsersController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/{userId}/resend-invite")
+    @PreAuthorize("hasRole('OPERATOR_ADMIN')")
+    public TenantUserResponse resendInvite(@PathVariable String tenantId,
+                                           @PathVariable String userId,
+                                           @AuthenticationPrincipal AuthenticatedUser caller) {
+        requireLiveTenant(tenantId);
+        visibility.requireVisibility(tenantId);
+        return TenantContext.callIn(tenantId,
+                () -> service.resendInvite(userId, caller.claims().userId()));
+    }
+
     /** 404 if the tenant document is missing or soft-deleted. */
     private void requireLiveTenant(String tenantId) {
         if (tenants.findByIdAndDeletedAtIsNull(tenantId).isEmpty()) {

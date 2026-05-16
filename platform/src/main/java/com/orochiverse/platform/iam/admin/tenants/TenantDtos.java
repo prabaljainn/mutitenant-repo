@@ -30,6 +30,14 @@ public final class TenantDtos {
             String name,
             Map<String, Object> settings) {}
 
+    /**
+     * Hands ownership of the tenant to another active tenant ADMIN. The
+     * previous owner stays as a plain ADMIN — they keep their rights but
+     * lose owner-protection.
+     */
+    public record TransferOwnershipRequest(
+            @NotBlank String newOwnerUserId) {}
+
     public record TenantResponse(
             String id,
             String name,

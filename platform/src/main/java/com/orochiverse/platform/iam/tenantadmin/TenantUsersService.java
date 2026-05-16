@@ -187,6 +187,35 @@ public class TenantUsersService {
                         "expiresAt", accept.expiresAt().toString()));
     }
 
+    /**
+     * Re-send the invite email for a tenant user stuck in
+     * {@link UserStatus#INVITED}. Issues a fresh accept token and revokes
+     * any prior outstanding ones so the link from the original email
+     * becomes inert. 422 if the user has already accepted.
+     */
+    public TenantUserResponse resendInvite(String id, String actorUserId) {
+        String tenantId = TenantContext.requireCurrent();
+        User existing = loadInCurrentTenantOrThrow(id);
+        if (existing.status() != UserStatus.INVITED) {
+            throw new UnprocessableException(
+                    "tenant user " + id + " is not in INVITED status — no invite to resend");
+        }
+
+        singleUseTokens.revokeAllForUser(id);
+        SingleUseToken accept = singleUseTokens.issue(id, TokenPurpose.INVITE_ACCEPT);
+        try {
+            sendTenantUserInviteEmail(existing, tenantId, existing.tenantRole().name(), accept);
+        } catch (RuntimeException e) {
+            log.warn("tenant user invite resend issued but email failed id={} email={}: {}",
+                    id, existing.email(), e.getMessage());
+        }
+
+        audit.save(auditEntry(AuditAction.TENANT_USER_INVITE_RESENT, actorUserId, tenantId,
+                Map.of("tenantUserId", id, "email", existing.email())));
+        log.info("tenant user invite resent tenant={} id={} actor={}", tenantId, id, actorUserId);
+        return TenantUserResponse.from(existing);
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Read
     // ─────────────────────────────────────────────────────────────────────

@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.orochiverse.platform.common.security.auth.AuthenticatedUser;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.CreateTenantRequest;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.TenantResponse;
+import com.orochiverse.platform.iam.admin.tenants.TenantDtos.TransferOwnershipRequest;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.UpdateTenantRequest;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -77,5 +78,13 @@ public class TenantsAdminController {
                                        @AuthenticationPrincipal AuthenticatedUser caller) {
         service.softDelete(id, caller.claims().userId());
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{id}/owner")
+    @PreAuthorize("hasRole('OPERATOR_ADMIN')")
+    public TenantResponse transferOwnership(@PathVariable String id,
+                                            @Valid @RequestBody TransferOwnershipRequest req,
+                                            @AuthenticationPrincipal AuthenticatedUser caller) {
+        return service.transferOwnership(id, req.newOwnerUserId(), caller.claims().userId());
     }
 }

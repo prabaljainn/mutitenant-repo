@@ -17,15 +17,21 @@ import org.springframework.stereotype.Service;
 import com.orochiverse.platform.common.audit.AuditAction;
 import com.orochiverse.platform.common.audit.AuditEntry;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
+import com.orochiverse.platform.common.security.principals.TenantRole;
+import com.orochiverse.platform.common.security.principals.UserKind;
 import com.orochiverse.platform.common.tenant.TenantDatabaseProvisioner;
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.ConflictException;
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.NotFoundException;
+import com.orochiverse.platform.iam.admin.common.AdminExceptions.UnprocessableException;
 import com.orochiverse.platform.iam.admin.common.OperatorVisibility;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.CreateTenantRequest;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.TenantResponse;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.UpdateTenantRequest;
 import com.orochiverse.platform.iam.tenants.Tenant;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
+import com.orochiverse.platform.iam.users.User;
+import com.orochiverse.platform.iam.users.UserRepository;
+import com.orochiverse.platform.iam.users.UserStatus;
 
 /**
  * Tenant lifecycle for operator admins. Each mutation is paired with the
@@ -65,6 +71,7 @@ public class TenantsAdminService {
     private static final Logger log = LoggerFactory.getLogger(TenantsAdminService.class);
 
     private final TenantRepository tenants;
+    private final UserRepository users;
     private final TenantDatabaseProvisioner provisioner;
     private final AuditEntryRepository audit;
     private final OperatorVisibility visibility;
@@ -72,12 +79,14 @@ public class TenantsAdminService {
             com.orochiverse.platform.iam.settings.TenantSettingsService> settingsCleanup;
 
     public TenantsAdminService(TenantRepository tenants,
+                               UserRepository users,
                                TenantDatabaseProvisioner provisioner,
                                AuditEntryRepository audit,
                                OperatorVisibility visibility,
                                org.springframework.beans.factory.ObjectProvider<
                                        com.orochiverse.platform.iam.settings.TenantSettingsService> settingsCleanup) {
         this.tenants = tenants;
+        this.users = users;
         this.provisioner = provisioner;
         this.audit = audit;
         this.visibility = visibility;
@@ -148,6 +157,60 @@ public class TenantsAdminService {
         if (req.settings() != null) changes.put("settings", "<changed>");
         audit.save(AuditEntry.of(AuditAction.TENANT_UPDATED, actorUserId,
                 Map.of("tenantId", id, "changes", changes)));
+
+        return TenantResponse.from(saved);
+    }
+
+    /**
+     * Hands tenant ownership to another active ADMIN of this tenant. The
+     * previous owner stays as a plain ADMIN — they keep their rights but
+     * lose owner-protection. Replaces the manual {@code db.tenants.update}
+     * patch we'd otherwise have to ssh in to apply.
+     *
+     * <h3>Validation</h3>
+     * <ol>
+     *   <li>Tenant exists (live).</li>
+     *   <li>{@code newOwnerUserId} resolves to a user.</li>
+     *   <li>That user is a {@code TENANT_USER} of <em>this</em> tenant.</li>
+     *   <li>Their role is {@link TenantRole#ADMIN}.</li>
+     *   <li>Their status is {@link UserStatus#ACTIVE}.</li>
+     *   <li>They are not already the current owner.</li>
+     * </ol>
+     * Anything else → 422 (or 404 for missing tenant).
+     */
+    public TenantResponse transferOwnership(String id, String newOwnerUserId, String actorUserId) {
+        Tenant existing = loadOrThrow(id);
+        String currentOwnerId = existing.ownerUserId();
+
+        if (newOwnerUserId.equals(currentOwnerId)) {
+            throw new UnprocessableException(
+                    "user " + newOwnerUserId + " already owns this tenant");
+        }
+
+        User newOwner = users.findById(newOwnerUserId).orElseThrow(() ->
+                new UnprocessableException("user " + newOwnerUserId + " not found"));
+        if (newOwner.kind() != UserKind.TENANT_USER || !id.equals(newOwner.tenantId())) {
+            throw new UnprocessableException(
+                    "user " + newOwnerUserId + " does not belong to tenant " + id);
+        }
+        if (newOwner.tenantRole() != TenantRole.ADMIN) {
+            throw new UnprocessableException(
+                    "user " + newOwnerUserId + " must be a tenant ADMIN to receive ownership");
+        }
+        if (newOwner.status() != UserStatus.ACTIVE) {
+            throw new UnprocessableException(
+                    "user " + newOwnerUserId + " is not ACTIVE — cannot receive ownership");
+        }
+
+        var saved = tenants.save(existing.withOwner(newOwnerUserId));
+
+        var meta = new java.util.LinkedHashMap<String, Object>();
+        meta.put("tenantId", id);
+        if (currentOwnerId != null) meta.put("from", currentOwnerId);
+        meta.put("to", newOwnerUserId);
+        audit.save(AuditEntry.of(AuditAction.TENANT_OWNERSHIP_TRANSFERRED, actorUserId, meta));
+        log.info("tenant ownership transferred tenant={} from={} to={} actor={}",
+                id, currentOwnerId, newOwnerUserId, actorUserId);
 
         return TenantResponse.from(saved);
     }

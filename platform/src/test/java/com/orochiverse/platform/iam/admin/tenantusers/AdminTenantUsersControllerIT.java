@@ -175,4 +175,36 @@ class AdminTenantUsersControllerIT {
                 Map.of("role", "MEMBER"), Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Resend invite
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resend_invite_succeeds_for_invited_tenant_user() {
+        // Create an INVITED user first via the invite endpoint.
+        var invite = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users",
+                HttpMethod.POST, adminToken,
+                Map.of("email", "re-" + suffix + "@a.example",
+                        "firstName", "Re", "lastName", "Send", "role", "MEMBER"),
+                Map.class);
+        createdInviteId = (String) invite.getBody().get("id");
+
+        var resp = IT.exchange(port,
+                "/admin/api/tenants/" + tenantId + "/users/" + createdInviteId + "/resend-invite",
+                HttpMethod.POST, adminToken, null, Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).containsEntry("status", "INVITED");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resend_invite_returns_422_for_active_tenant_user() {
+        // ownerUserId is seeded as ACTIVE in setUp.
+        var resp = IT.exchange(port,
+                "/admin/api/tenants/" + tenantId + "/users/" + ownerUserId + "/resend-invite",
+                HttpMethod.POST, adminToken, null, Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
 }

@@ -38,6 +38,13 @@ export const tenantsApi = {
   },
   remove: (id: string) =>
     api<void>(`/admin/api/tenants/${id}`, { method: "DELETE" }),
+  transferOwnership: async (id: string, newOwnerUserId: string): Promise<Tenant> => {
+    const row = await api<SpringTenant>(`/admin/api/tenants/${id}/owner`, {
+      method: "POST",
+      json: { newOwnerUserId },
+    });
+    return toTenant(row);
+  },
 };
 
 export const membersApi = {
@@ -78,4 +85,11 @@ export const membersApi = {
   },
   remove: (tenantId: string, userId: string) =>
     api<void>(`/admin/api/tenants/${tenantId}/users/${userId}`, { method: "DELETE" }),
+  resendInvite: async (tenantId: string, userId: string): Promise<Member> => {
+    const row = await api<SpringTenantUser>(
+      `/admin/api/tenants/${tenantId}/users/${userId}/resend-invite`,
+      { method: "POST", json: {} },
+    );
+    return toMember(row);
+  },
 };

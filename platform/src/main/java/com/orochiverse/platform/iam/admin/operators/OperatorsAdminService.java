@@ -153,6 +153,37 @@ public class OperatorsAdminService {
                         "expiresAt", accept.expiresAt().toString()));
     }
 
+    /**
+     * Re-send the invite email for an operator stuck in
+     * {@link UserStatus#INVITED}. Issues a fresh accept token and revokes
+     * any prior outstanding ones so the link from the original (unread)
+     * email becomes inert. 422 if the operator has already accepted.
+     */
+    public OperatorResponse resendInvite(String id, String actorUserId) {
+        User existing = loadOperatorOrThrow(id);
+        if (existing.status() != UserStatus.INVITED) {
+            throw new UnprocessableException(
+                    "operator " + id + " is not in INVITED status — no invite to resend");
+        }
+
+        // Drop any outstanding INVITE_ACCEPT tokens before issuing a new
+        // one. Safe to revoke everything: invited users haven't logged
+        // in yet, so there are no reset-password tokens to lose.
+        singleUseTokens.revokeAllForUser(id);
+        SingleUseToken accept = singleUseTokens.issue(id, TokenPurpose.INVITE_ACCEPT);
+        try {
+            sendOperatorInviteEmail(existing, existing.operatorRole().name(), accept);
+        } catch (RuntimeException e) {
+            log.warn("operator invite resend issued but email failed id={} email={}: {}",
+                    id, existing.email(), e.getMessage());
+        }
+
+        audit.save(AuditEntry.of(AuditAction.OPERATOR_INVITE_RESENT, actorUserId,
+                Map.of("operatorId", id, "email", existing.email())));
+        log.info("operator invite resent id={} actor={}", id, actorUserId);
+        return OperatorResponse.from(existing);
+    }
+
     public List<OperatorResponse> list(UserStatus statusFilter) {
         var status = statusFilter == null ? UserStatus.ACTIVE : statusFilter;
         return users.findAllByKindAndStatus(UserKind.OPERATOR, status).stream()

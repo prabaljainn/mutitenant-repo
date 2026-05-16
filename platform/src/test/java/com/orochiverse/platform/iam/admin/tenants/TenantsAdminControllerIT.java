@@ -23,11 +23,13 @@ import com.mongodb.client.MongoClient;
 import com.orochiverse.platform.common.security.jwt.AccessTokenIssuer;
 import com.orochiverse.platform.common.security.passwords.PasswordHashing;
 import com.orochiverse.platform.common.security.principals.OperatorRole;
+import com.orochiverse.platform.common.security.principals.TenantRole;
 import com.orochiverse.platform.common.tenant.TenantId;
 import com.orochiverse.platform.iam.operators.OperatorAssignment;
 import com.orochiverse.platform.iam.operators.OperatorAssignmentRepository;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
 import com.orochiverse.platform.iam.users.UserRepository;
+import com.orochiverse.platform.iam.users.UserStatus;
 import com.orochiverse.platform.testsupport.IT;
 import com.orochiverse.platform.testsupport.IamFixtures;
 import com.orochiverse.platform.testsupport.JwtTestSupport;
@@ -59,6 +61,7 @@ class TenantsAdminControllerIT {
     // Tracks every tenant created during a test so @AfterEach can clean
     // up the docs and per-tenant DBs even though the id is server-assigned.
     private final List<String> createdTenantIds = new ArrayList<>();
+    private final List<String> createdUserIds = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -85,12 +88,25 @@ class TenantsAdminControllerIT {
         // Clean any assignments granted in the test before deleting users.
         assignments.findAllByOperatorUserId(supportId)
                 .forEach(a -> assignments.deleteById(a.id()));
+        for (String id : createdUserIds) users.deleteById(id);
         users.deleteById(adminId);
         users.deleteById(supportId);
         for (String id : createdTenantIds) {
             tenants.deleteById(id);
             mongo.getDatabase(TenantId.dbName(id)).drop();
         }
+    }
+
+    /** Seed a tenant user directly via repo so the test doesn't depend on the invite flow. */
+    private String seedTenantUser(String tenantId, TenantRole role, UserStatus status) {
+        // Per-user suffix so id+email stay unique across the test.
+        String uniq = suffix + "-" + createdUserIds.size();
+        var u = IamFixtures.tenantUser(uniq, tenantId)
+                .role(role)
+                .status(status)
+                .save(users, passwords);
+        createdUserIds.add(u.id());
+        return u.id();
     }
 
     /** Grants the test's SUPPORT operator visibility into a tenant. */
@@ -340,5 +356,107 @@ class TenantsAdminControllerIT {
         List<String> ids = ((List<Map<String, Object>>) list.getBody()).stream()
                 .map(r -> (String) r.get("id")).toList();
         assertThat(ids).doesNotContain(id);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Ownership transfer
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void transfer_ownership_to_another_admin_succeeds() {
+        String tid = createTenant(adminToken, "Acme " + suffix);
+        // Seed two ADMINs: current owner + the new candidate.
+        String currentOwner = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.ACTIVE);
+        String newOwner = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.ACTIVE);
+        tenants.save(tenants.findById(tid).orElseThrow().withOwner(currentOwner));
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tid + "/owner",
+                HttpMethod.POST, adminToken,
+                Map.of("newOwnerUserId", newOwner), Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).containsEntry("ownerUserId", newOwner);
+        assertThat(tenants.findById(tid).orElseThrow().ownerUserId()).isEqualTo(newOwner);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void transfer_to_member_returns_422() {
+        String tid = createTenant(adminToken, "Acme " + suffix);
+        String currentOwner = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.ACTIVE);
+        String target = seedTenantUser(tid, TenantRole.MEMBER, UserStatus.ACTIVE);
+        tenants.save(tenants.findById(tid).orElseThrow().withOwner(currentOwner));
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tid + "/owner",
+                HttpMethod.POST, adminToken,
+                Map.of("newOwnerUserId", target), Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void transfer_to_suspended_admin_returns_422() {
+        String tid = createTenant(adminToken, "Acme " + suffix);
+        String currentOwner = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.ACTIVE);
+        String target = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.SUSPENDED);
+        tenants.save(tenants.findById(tid).orElseThrow().withOwner(currentOwner));
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tid + "/owner",
+                HttpMethod.POST, adminToken,
+                Map.of("newOwnerUserId", target), Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void transfer_to_user_in_a_different_tenant_returns_422() {
+        String tid = createTenant(adminToken, "Acme " + suffix);
+        String otherTid = createTenant(adminToken, "Other " + suffix);
+        String otherTenantAdmin = seedTenantUser(otherTid, TenantRole.ADMIN, UserStatus.ACTIVE);
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tid + "/owner",
+                HttpMethod.POST, adminToken,
+                Map.of("newOwnerUserId", otherTenantAdmin), Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void transfer_to_current_owner_returns_422() {
+        String tid = createTenant(adminToken, "Acme " + suffix);
+        String currentOwner = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.ACTIVE);
+        tenants.save(tenants.findById(tid).orElseThrow().withOwner(currentOwner));
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tid + "/owner",
+                HttpMethod.POST, adminToken,
+                Map.of("newOwnerUserId", currentOwner), Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void transfer_on_unknown_tenant_returns_404() {
+        var resp = IT.exchange(port, "/admin/api/tenants/no-such/owner",
+                HttpMethod.POST, adminToken,
+                Map.of("newOwnerUserId", "tu-doesnt-matter"), Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void support_cannot_transfer_ownership() {
+        String tid = createTenant(adminToken, "Acme " + suffix);
+        String newOwner = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.ACTIVE);
+        assignSupportTo(tid);
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tid + "/owner",
+                HttpMethod.POST, supportToken,
+                Map.of("newOwnerUserId", newOwner), Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
 }

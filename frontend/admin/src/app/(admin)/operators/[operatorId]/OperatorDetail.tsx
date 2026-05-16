@@ -77,6 +77,16 @@ export function OperatorDetail({ operatorId }: { operatorId: string }) {
     },
   });
 
+  const resend = useMutation({
+    mutationFn: () => operatorsApi.resendInvite(operatorId),
+    onSuccess: () => {
+      notify("Invite email re-sent", "success");
+    },
+    onError: (e: unknown) => {
+      notify(e instanceof Error ? e.message : "Resend failed", "error");
+    },
+  });
+
   function confirmDelete() {
     if (!window.confirm("Soft-delete this operator? Their access is revoked but audit history is preserved.")) return;
     remove.mutate();
@@ -179,9 +189,19 @@ export function OperatorDetail({ operatorId }: { operatorId: string }) {
                     </button>
                   )}
                   {op.status === "INVITED" && (
-                    <div className="field-hint">
-                      Awaiting invite acceptance. The invitee gets a link via email.
-                    </div>
+                    <>
+                      <button
+                        className="btn"
+                        disabled={resend.isPending}
+                        onClick={() => resend.mutate()}
+                      >
+                        <Icon d={Icons.mail} size={14} />{" "}
+                        {resend.isPending ? "Sending…" : "Resend invite email"}
+                      </button>
+                      <div className="field-hint">
+                        Awaiting invite acceptance. Re-issuing invalidates the previous link.
+                      </div>
+                    </>
                   )}
                   <button
                     className="btn"

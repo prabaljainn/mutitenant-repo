@@ -6,6 +6,7 @@ import { useEffect, useState, type KeyboardEvent } from "react";
 
 import { SettingsCards } from "@/components/settings/SettingsCards";
 import { Topbar } from "@/components/shell/Topbar";
+import { TransferOwnershipModal } from "@/components/tenants/TransferOwnershipModal";
 import { Icon } from "@/components/icons/Icon";
 import { Icons } from "@/components/icons/icons";
 import { Avatar } from "@/components/ui/Avatar";
@@ -55,6 +56,7 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
   const [tab, setTab] = useState<TabKey>("members");
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+  const [transferOpen, setTransferOpen] = useState(false);
 
   useEffect(() => {
     if (tenant.data) setNameDraft(tenant.data.name);
@@ -102,6 +104,24 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
     ) return;
     remove.mutate();
   }
+
+  const transferOwnership = useMutation({
+    mutationFn: (newOwnerUserId: string) =>
+      tenantsApi.transferOwnership(tenantId, newOwnerUserId),
+    onSuccess: (updated) => {
+      qc.setQueryData(["tenants", tenantId], updated);
+      qc.setQueryData(["tenants"], (prev: Tenant[] | undefined) =>
+        prev?.map((t) => (t.id === updated.id ? updated : t)) ?? prev,
+      );
+      // Refetch members so the owner badge moves to the new user.
+      qc.invalidateQueries({ queryKey: ["tenants", tenantId, "members"] });
+      setTransferOpen(false);
+      notify("Tenant ownership transferred", "success");
+    },
+    onError: (e: unknown) => {
+      notify(e instanceof Error ? e.message : "Transfer failed", "error");
+    },
+  });
 
   function commitRename() {
     const v = nameDraft.trim();
@@ -213,7 +233,24 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
               <CardBody>
                 <KV
                   items={[
-                    { label: "Owner", value: ownerName ?? (t.ownerUserId ? t.ownerUserId : "— not yet assigned") },
+                    {
+                      label: "Owner",
+                      value: (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          {ownerName ?? (t.ownerUserId ? t.ownerUserId : "— not yet assigned")}
+                          {canManage && t.ownerUserId && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ padding: "2px 8px" }}
+                              onClick={() => setTransferOpen(true)}
+                              title="Transfer ownership"
+                            >
+                              <Icon d={Icons.switch} size={12} /> Transfer
+                            </button>
+                          )}
+                        </span>
+                      ),
+                    },
                     { label: "Members", value: memberCount },
                     { label: "Created", value: formatGB(t.createdAt), mono: true },
                     { label: "Tenant ID", value: t.id, mono: true },
@@ -266,6 +303,22 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
 
         {tab === "settings" && <SettingsCards tenantId={tenantId} canManage={canManage} />}
       </div>
+
+      {canManage && (
+        <TransferOwnershipModal
+          open={transferOpen}
+          currentOwnerName={ownerName}
+          candidates={(members.data ?? []).filter(
+            (m) =>
+              m.userId !== t.ownerUserId &&
+              m.role === "Admin" &&
+              m.status === "ACTIVE",
+          )}
+          onClose={() => setTransferOpen(false)}
+          onSubmit={(uid) => transferOwnership.mutate(uid)}
+          submitting={transferOwnership.isPending}
+        />
+      )}
     </>
   );
 }
@@ -341,6 +394,16 @@ function MembersTab({
     },
   });
 
+  const resend = useMutation({
+    mutationFn: (userId: string) => membersApi.resendInvite(tenantId, userId),
+    onSuccess: () => {
+      notify("Invite email re-sent", "success");
+    },
+    onError: (e: unknown) => {
+      notify(e instanceof Error ? e.message : "Resend failed", "error");
+    },
+  });
+
   function sendInvite() {
     setErr("");
     if (!/^\S+@\S+\.\S+$/.test(email)) {
@@ -396,7 +459,8 @@ function MembersTab({
                     onChangeRole={(role) => update.mutate({ userId: m.userId, patch: { role } })}
                     onChangeStatus={(status) => update.mutate({ userId: m.userId, patch: { status } })}
                     onRemove={() => remove.mutate(m.userId)}
-                    busy={update.isPending || remove.isPending}
+                    onResend={() => resend.mutate(m.userId)}
+                    busy={update.isPending || remove.isPending || resend.isPending}
                   />
                 ))
               )}
@@ -505,6 +569,7 @@ function MemberRow({
   onChangeRole,
   onChangeStatus,
   onRemove,
+  onResend,
   busy,
 }: {
   m: Member;
@@ -513,6 +578,7 @@ function MemberRow({
   onChangeRole: (role: MemberRole) => void;
   onChangeStatus: (status: MemberStatus) => void;
   onRemove: () => void;
+  onResend: () => void;
   busy: boolean;
 }) {
   // Owner can't be demoted, suspended, or removed — backend 422s either
@@ -568,6 +634,16 @@ function MemberRow({
       {canManage && (
         <td>
           <div style={{ display: "flex", gap: 4 }}>
+            {m.status === "INVITED" && (
+              <button
+                className="btn btn-ghost btn-icon btn-sm"
+                onClick={onResend}
+                title="Resend invite email"
+                disabled={busy}
+              >
+                <Icon d={Icons.mail} size={14} />
+              </button>
+            )}
             {m.status === "ACTIVE" && (
               <button
                 className="btn btn-ghost btn-icon btn-sm"

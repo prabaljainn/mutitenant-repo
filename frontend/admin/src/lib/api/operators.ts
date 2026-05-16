@@ -70,6 +70,13 @@ export const operatorsApi = {
   },
   remove: (id: string) =>
     api<void>(`/admin/api/operators/${id}`, { method: "DELETE" }),
+  resendInvite: async (id: string): Promise<Operator> => {
+    const row = await api<SpringOperator>(
+      `/admin/api/operators/${id}/resend-invite`,
+      { method: "POST", json: {} },
+    );
+    return toOperator(row);
+  },
 };
 
 export const assignmentsApi = {

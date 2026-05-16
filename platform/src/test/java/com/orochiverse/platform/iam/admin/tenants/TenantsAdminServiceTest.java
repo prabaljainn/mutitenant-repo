@@ -16,6 +16,7 @@ import com.orochiverse.platform.common.tenant.TenantId;
 import com.orochiverse.platform.iam.admin.common.OperatorVisibility;
 import com.orochiverse.platform.iam.settings.TenantSettingsService;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
+import com.orochiverse.platform.iam.users.UserRepository;
 
 /**
  * Unit tests for the tenant-id slug generator. The full create flow is
@@ -100,10 +101,11 @@ class TenantsAdminServiceTest {
 
     @SuppressWarnings("unchecked")
     private static TenantsAdminService newService(TenantRepository tenants) {
+        var users = mock(UserRepository.class);
         var provisioner = mock(TenantDatabaseProvisioner.class);
         var audit = mock(AuditEntryRepository.class);
         var visibility = mock(OperatorVisibility.class);
         var settings = (ObjectProvider<TenantSettingsService>) mock(ObjectProvider.class);
-        return new TenantsAdminService(tenants, provisioner, audit, visibility, settings);
+        return new TenantsAdminService(tenants, users, provisioner, audit, visibility, settings);
     }
 }

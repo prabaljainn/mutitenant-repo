@@ -79,4 +79,11 @@ public class OperatorsAdminController {
         service.softDelete(id, caller.claims().userId());
         return ResponseEntity.noContent().build();
     }
+
+    @PostMapping("/{id}/resend-invite")
+    @PreAuthorize("hasRole('OPERATOR_ADMIN')")
+    public OperatorResponse resendInvite(@PathVariable String id,
+                                         @AuthenticationPrincipal AuthenticatedUser caller) {
+        return service.resendInvite(id, caller.claims().userId());
+    }
 }

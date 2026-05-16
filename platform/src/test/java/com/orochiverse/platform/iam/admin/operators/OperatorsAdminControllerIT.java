@@ -199,4 +199,41 @@ class OperatorsAdminControllerIT {
         assertThat(after.status()).isEqualTo(UserStatus.DELETED);
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Resend invite
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resend_invite_succeeds_for_invited_operator() {
+        var invite = IT.exchange(port, "/admin/api/operators", HttpMethod.POST, adminToken,
+                Map.of("email", "resend-" + suffix + "@orochi.example",
+                        "firstName", "Re", "lastName", "Send", "role", "OPERATOR_SUPPORT"),
+                Map.class);
+        String id = (String) ((Map<String, Object>) invite.getBody()).get("id");
+        createdInviteId = id;
+
+        var resp = IT.exchange(port, "/admin/api/operators/" + id + "/resend-invite",
+                HttpMethod.POST, adminToken, null, Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).containsEntry("status", "INVITED");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resend_invite_returns_422_for_non_invited_operator() {
+        // adminId is ACTIVE — the bootstrap operator in this test class.
+        var resp = IT.exchange(port, "/admin/api/operators/" + adminId + "/resend-invite",
+                HttpMethod.POST, adminToken, null, Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resend_invite_returns_404_for_unknown_operator() {
+        var resp = IT.exchange(port, "/admin/api/operators/operator-nosuch/resend-invite",
+                HttpMethod.POST, adminToken, null, Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
 }
