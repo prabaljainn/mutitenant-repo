@@ -11,7 +11,7 @@ import {
   type SpringTenant,
   type SpringTenantUser,
 } from "./adapters";
-import type { Member, MemberRole, Tenant } from "./types";
+import type { Member, MemberRole, MemberStatus, Tenant } from "./types";
 
 export const tenantsApi = {
   list: async (): Promise<Tenant[]> => {
@@ -58,6 +58,22 @@ export const membersApi = {
         role: memberRoleToWire(input.role),
       },
     });
+    return toMember(row);
+  },
+  update: async (
+    tenantId: string,
+    userId: string,
+    patch: { role?: MemberRole; status?: MemberStatus },
+  ): Promise<Member> => {
+    // Send only the fields the caller actually changed — backend
+    // contract: null = leave alone.
+    const body: Record<string, unknown> = {};
+    if (patch.role !== undefined) body.role = memberRoleToWire(patch.role);
+    if (patch.status !== undefined) body.status = patch.status;
+    const row = await api<SpringTenantUser>(
+      `/admin/api/tenants/${tenantId}/users/${userId}`,
+      { method: "PUT", json: body },
+    );
     return toMember(row);
   },
   remove: (tenantId: string, userId: string) =>

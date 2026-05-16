@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
@@ -73,13 +74,12 @@ export default function LoginPage() {
             <div className="field" style={{ marginTop: 14 }}>
               <div className="field-row">
                 <label className="field-label">Password</label>
-                <a
-                  href="#"
+                <Link
+                  href="/forgot-password"
                   style={{ fontSize: 12, color: "var(--accent)", textDecoration: "none" }}
-                  onClick={(e) => e.preventDefault()}
                 >
                   Forgot?
-                </a>
+                </Link>
               </div>
               <input
                 className="input"

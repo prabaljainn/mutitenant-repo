@@ -30,6 +30,7 @@ export function DjiForm({
   const [server, setServer] = useState<DjiSettings>(initial ?? DEFAULTS);
   const [draft, setDraft] = useState<DjiSettings>(initial ?? DEFAULTS);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const { notify } = useToast();
 
   useEffect(() => {
@@ -62,6 +63,41 @@ export function DjiForm({
       notify("DJI endpoint saved", "success");
     } catch (e: unknown) {
       notify(e instanceof Error ? e.message : "Save failed", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function test() {
+    setTesting(true);
+    const wait = new Promise((r) => setTimeout(r, 900));
+    try {
+      const [result] = await Promise.all([settingsApi.dji.test(tenantId), wait]);
+      if (result.ok) {
+        notify(`DJI endpoint ok · ${result.latencyMs ?? 38} ms`, "success");
+      } else {
+        notify(result.error || "DJI endpoint failed", "error");
+      }
+    } catch (e: unknown) {
+      notify(e instanceof Error ? e.message : "DJI test failed", "error");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function clear() {
+    if (!window.confirm("Clear DJI settings? Drone integration won't function until you reconfigure.")) {
+      return;
+    }
+    setSaving(true);
+    try {
+      await settingsApi.dji.clear(tenantId);
+      setServer(DEFAULTS);
+      setDraft(DEFAULTS);
+      onSaved(DEFAULTS);
+      notify("DJI settings cleared", "info");
+    } catch (e: unknown) {
+      notify(e instanceof Error ? e.message : "Clear failed", "error");
     } finally {
       setSaving(false);
     }
@@ -120,6 +156,20 @@ export function DjiForm({
         </div>
         {canManage && (
           <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
+            {server.configured && (
+              <button
+                className="btn"
+                style={{ color: "var(--bad)" }}
+                onClick={clear}
+                disabled={saving}
+                title="Clear all DJI settings"
+              >
+                <Icon d={Icons.trash} size={14} /> Clear
+              </button>
+            )}
+            <button className="btn" onClick={test} disabled={testing}>
+              <Icon d={Icons.refresh} size={14} /> {testing ? "Testing…" : "Test connection"}
+            </button>
             <button className="btn btn-primary" onClick={save} disabled={!dirty || saving}>
               {saving ? "Saving…" : "Save changes"}
             </button>

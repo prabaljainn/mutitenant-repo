@@ -35,6 +35,8 @@ export const settingsApi = {
         path(tenantId, "MQTT", "/test"),
         { method: "POST", json: {} }
       ),
+    clear: (tenantId: string) =>
+      api<void>(path(tenantId, "MQTT"), { method: "DELETE" }),
   },
   dji: {
     get: async (tenantId: string): Promise<DjiSettings> => {
@@ -48,5 +50,12 @@ export const settingsApi = {
       });
       return toDji(s);
     },
+    test: (tenantId: string) =>
+      api<{ ok: boolean; latencyMs?: number; error?: string }>(
+        path(tenantId, "DJI", "/test"),
+        { method: "POST", json: {} }
+      ),
+    clear: (tenantId: string) =>
+      api<void>(path(tenantId, "DJI"), { method: "DELETE" }),
   },
 };

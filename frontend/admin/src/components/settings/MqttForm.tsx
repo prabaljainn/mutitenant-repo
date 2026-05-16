@@ -90,6 +90,24 @@ export function MqttForm({
     }
   }
 
+  async function clear() {
+    if (!window.confirm("Clear MQTT settings? Drones won't be able to publish until you reconfigure.")) {
+      return;
+    }
+    setSaving(true);
+    try {
+      await settingsApi.mqtt.clear(tenantId);
+      setServer(DEFAULTS);
+      setDraft(DEFAULTS);
+      onSaved(DEFAULTS);
+      notify("MQTT settings cleared", "info");
+    } catch (e: unknown) {
+      notify(e instanceof Error ? e.message : "Clear failed", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const configured = !!server.host;
 
   return (
@@ -135,6 +153,17 @@ export function MqttForm({
         </div>
         {canManage && (
           <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
+            {configured && (
+              <button
+                className="btn"
+                style={{ color: "var(--bad)" }}
+                onClick={clear}
+                disabled={saving}
+                title="Clear all MQTT settings"
+              >
+                <Icon d={Icons.trash} size={14} /> Clear
+              </button>
+            )}
             <button className="btn" onClick={test} disabled={testing}>
               <Icon d={Icons.refresh} size={14} /> {testing ? "Testing…" : "Test connection"}
             </button>

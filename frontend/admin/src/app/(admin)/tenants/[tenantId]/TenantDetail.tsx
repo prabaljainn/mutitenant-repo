@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type KeyboardEvent } from "react";
 
 import { SettingsCards } from "@/components/settings/SettingsCards";
@@ -15,11 +16,24 @@ import { KV } from "@/components/ui/KV";
 import { Tabs, type TabDef } from "@/components/ui/Tabs";
 import { TenantMark } from "@/components/ui/TenantMark";
 import { membersApi, tenantsApi } from "@/lib/api/tenants";
-import { type MemberRole, type Tenant } from "@/lib/api/types";
+import { type Member, type MemberRole, type MemberStatus, type Tenant } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { isOperatorAdmin } from "@/lib/auth/jwt";
 import { useToast } from "@/lib/toast/ToastProvider";
 import { formatGB } from "@/lib/utils/date";
+
+function memberStatusChip(status: MemberStatus) {
+  switch (status) {
+    case "ACTIVE":
+      return <Chip variant="good">Active</Chip>;
+    case "INVITED":
+      return <Chip variant="warn">Invited</Chip>;
+    case "SUSPENDED":
+      return <Chip variant="bad">Suspended</Chip>;
+    case "DELETED":
+      return <Chip variant="muted">Deleted</Chip>;
+  }
+}
 
 type TabKey = "overview" | "members" | "settings";
 
@@ -27,6 +41,7 @@ const INVITE_ROLES: MemberRole[] = ["Admin", "Member"];
 
 export function TenantDetail({ tenantId }: { tenantId: string }) {
   const qc = useQueryClient();
+  const router = useRouter();
   const { notify } = useToast();
   const { claims } = useAuth();
   const canManage = isOperatorAdmin(claims);
@@ -60,6 +75,33 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
       setRenaming(false);
     },
   });
+
+  const remove = useMutation({
+    mutationFn: () => tenantsApi.remove(tenantId),
+    onSuccess: () => {
+      // Drop the row from cached lists so /tenants doesn't flash a stale
+      // entry before the next refetch.
+      qc.setQueryData(["tenants"], (prev: Tenant[] | undefined) =>
+        prev?.filter((t) => t.id !== tenantId) ?? prev,
+      );
+      qc.removeQueries({ queryKey: ["tenants", tenantId] });
+      notify(`Tenant ${tenantId} deleted`, "info");
+      router.replace("/tenants");
+    },
+    onError: (e: unknown) => {
+      notify(e instanceof Error ? e.message : "Delete failed", "error");
+    },
+  });
+
+  function confirmDelete(name: string) {
+    if (
+      !window.confirm(
+        `Soft-delete tenant "${name}"?\n\nThe per-tenant database is dropped immediately. ` +
+          `The tenant document is kept (with deletedAt stamped) so audit history survives.`,
+      )
+    ) return;
+    remove.mutate();
+  }
 
   function commitRename() {
     const v = nameDraft.trim();
@@ -164,6 +206,7 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
         <Tabs<TabKey> value={tab} onChange={setTab} tabs={tabs} />
 
         {tab === "overview" && (
+          <>
           <div className="grid-2">
             <Card>
               <CardHead title="About" />
@@ -195,6 +238,26 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
               </CardBody>
             </Card>
           </div>
+          {canManage && (
+            <Card className="card-danger">
+              <CardHead
+                title="Danger zone"
+                sub="Soft-deletes the tenant and drops its per-tenant Mongo database. The tenant document is kept for audit; the id can't be re-used until that row is purged."
+              />
+              <CardBody>
+                <button
+                  className="btn"
+                  style={{ color: "var(--bad)" }}
+                  disabled={remove.isPending}
+                  onClick={() => confirmDelete(t.name)}
+                >
+                  <Icon d={Icons.trash} size={14} />{" "}
+                  {remove.isPending ? "Deleting…" : "Soft-delete tenant"}
+                </button>
+              </CardBody>
+            </Card>
+          )}
+          </>
         )}
 
         {tab === "members" && (
@@ -264,6 +327,20 @@ function MembersTab({
     },
   });
 
+  const update = useMutation({
+    mutationFn: (input: { userId: string; patch: { role?: MemberRole; status?: MemberStatus } }) =>
+      membersApi.update(tenantId, input.userId, input.patch),
+    onSuccess: (updated) => {
+      qc.setQueryData(["tenants", tenantId, "members"], (rows: typeof members.data) =>
+        (rows ?? []).map((m) => (m.userId === updated.userId ? updated : m)),
+      );
+      notify("Member updated", "success");
+    },
+    onError: (e: unknown) => {
+      notify(e instanceof Error ? e.message : "Update failed", "error");
+    },
+  });
+
   function sendInvite() {
     setErr("");
     if (!/^\S+@\S+\.\S+$/.test(email)) {
@@ -297,54 +374,31 @@ function MembersTab({
               <tr>
                 <th>Member</th>
                 <th>Role</th>
+                <th>Status</th>
                 <th>Joined</th>
-                {canManage && <th style={{ width: 32 }}></th>}
+                {canManage && <th style={{ width: 80 }}></th>}
               </tr>
             </thead>
             <tbody>
               {list.length === 0 ? (
                 <tr>
-                  <td colSpan={canManage ? 4 : 3} style={{ padding: 24, textAlign: "center", color: "var(--fg-3)" }}>
+                  <td colSpan={canManage ? 5 : 4} style={{ padding: 24, textAlign: "center", color: "var(--fg-3)" }}>
                     {canManage ? "No members yet — invite someone →" : "No members yet."}
                   </td>
                 </tr>
               ) : (
-                list.map((m) => {
-                  const isOwner = m.userId === ownerUserId;
-                  return (
-                    <tr key={m.userId}>
-                      <td>
-                        <div className="user-cell">
-                          <Avatar name={m.name} />
-                          <div>
-                            <div className="user-cell-name">{m.name}</div>
-                            <div className="user-cell-email">{m.email}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <Chip variant={isOwner ? "info" : "muted"} dot={false}>
-                          {isOwner ? `${m.role} · Owner` : m.role}
-                        </Chip>
-                      </td>
-                      <td className="mono muted">
-                        {m.status === "INVITED" ? "Invited" : formatGB(m.joinedAt)}
-                      </td>
-                      {canManage && (
-                        <td>
-                          <button
-                            className="btn btn-ghost btn-icon btn-sm"
-                            onClick={() => remove.mutate(m.userId)}
-                            title="Remove"
-                            disabled={isOwner}
-                          >
-                            <Icon d={Icons.trash} size={14} />
-                          </button>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })
+                list.map((m) => (
+                  <MemberRow
+                    key={m.userId}
+                    m={m}
+                    isOwner={m.userId === ownerUserId}
+                    canManage={canManage}
+                    onChangeRole={(role) => update.mutate({ userId: m.userId, patch: { role } })}
+                    onChangeStatus={(status) => update.mutate({ userId: m.userId, patch: { status } })}
+                    onRemove={() => remove.mutate(m.userId)}
+                    busy={update.isPending || remove.isPending}
+                  />
+                ))
               )}
             </tbody>
           </table>
@@ -439,5 +493,112 @@ function MembersTab({
       </Card>
       )}
     </div>
+  );
+}
+
+const MEMBER_ROLES: MemberRole[] = ["Admin", "Member"];
+
+function MemberRow({
+  m,
+  isOwner,
+  canManage,
+  onChangeRole,
+  onChangeStatus,
+  onRemove,
+  busy,
+}: {
+  m: Member;
+  isOwner: boolean;
+  canManage: boolean;
+  onChangeRole: (role: MemberRole) => void;
+  onChangeStatus: (status: MemberStatus) => void;
+  onRemove: () => void;
+  busy: boolean;
+}) {
+  // Owner can't be demoted, suspended, or removed — backend 422s either
+  // way, but UI disabling makes the constraint legible.
+  return (
+    <tr>
+      <td>
+        <div className="user-cell">
+          <Avatar name={m.name} />
+          <div>
+            <div className="user-cell-name">
+              {m.name}
+              {isOwner && <span className="muted" style={{ marginLeft: 6, fontSize: 11 }}>· Owner</span>}
+            </div>
+            <div className="user-cell-email">{m.email}</div>
+          </div>
+        </div>
+      </td>
+      <td>
+        {canManage && !isOwner ? (
+          <div
+            style={{
+              display: "inline-flex",
+              gap: 4,
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              padding: 3,
+            }}
+          >
+            {MEMBER_ROLES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                className={"btn btn-sm " + (r === m.role ? "btn-primary" : "btn-ghost")}
+                style={{ padding: "2px 10px" }}
+                disabled={busy || r === m.role}
+                onClick={() => onChangeRole(r)}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <Chip variant={isOwner ? "info" : "muted"} dot={false}>
+            {m.role}
+          </Chip>
+        )}
+      </td>
+      <td>{memberStatusChip(m.status)}</td>
+      <td className="mono muted">
+        {m.status === "INVITED" ? "—" : formatGB(m.joinedAt)}
+      </td>
+      {canManage && (
+        <td>
+          <div style={{ display: "flex", gap: 4 }}>
+            {m.status === "ACTIVE" && (
+              <button
+                className="btn btn-ghost btn-icon btn-sm"
+                onClick={() => onChangeStatus("SUSPENDED")}
+                title={isOwner ? "Owner can't be suspended" : "Suspend"}
+                disabled={busy || isOwner}
+              >
+                <Icon d={Icons.shield} size={14} />
+              </button>
+            )}
+            {m.status === "SUSPENDED" && (
+              <button
+                className="btn btn-ghost btn-icon btn-sm"
+                onClick={() => onChangeStatus("ACTIVE")}
+                title="Reactivate"
+                disabled={busy}
+              >
+                <Icon d={Icons.shield} size={14} />
+              </button>
+            )}
+            <button
+              className="btn btn-ghost btn-icon btn-sm"
+              onClick={onRemove}
+              title={isOwner ? "Owner can't be removed" : "Remove"}
+              disabled={busy || isOwner}
+            >
+              <Icon d={Icons.trash} size={14} />
+            </button>
+          </div>
+        </td>
+      )}
+    </tr>
   );
 }

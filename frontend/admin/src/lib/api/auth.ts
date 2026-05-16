@@ -37,3 +37,12 @@ export function acceptInvite(token: string, newPassword: string): Promise<LoginR
 export function resetPassword(token: string, newPassword: string): Promise<void> {
   return postPublic<void>("/api/auth/reset-password", { token, newPassword });
 }
+
+/**
+ * Triggers a reset email if the address belongs to an active user.
+ * Backend always returns 204 — no information leak about whether the
+ * email exists. UI should always show the same generic confirmation.
+ */
+export function forgotPassword(email: string): Promise<void> {
+  return postPublic<void>("/api/auth/forgot-password", { email });
+}
