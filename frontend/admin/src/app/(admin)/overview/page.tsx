@@ -11,13 +11,22 @@ import { TenantMark } from "@/components/ui/TenantMark";
 import { dashboardApi } from "@/lib/api/dashboard";
 import { tenantsApi } from "@/lib/api/tenants";
 import { NotImplementedError } from "@/lib/api/types";
+import { useAuth } from "@/lib/auth/AuthProvider";
+import { isOperatorAdmin } from "@/lib/auth/jwt";
 import { formatRelative } from "@/lib/utils/date";
 
 export default function OverviewPage() {
   const router = useRouter();
+  const { claims } = useAuth();
+  const canReadAudit = isOperatorAdmin(claims);
+
   const stats = useQuery({ queryKey: ["dashboard", "stats"], queryFn: dashboardApi.stats });
   const tenants = useQuery({ queryKey: ["tenants"], queryFn: tenantsApi.list });
-  const recent = useQuery({ queryKey: ["dashboard", "recent"], queryFn: () => dashboardApi.recent(10) });
+  const recent = useQuery({
+    queryKey: ["dashboard", "recent"],
+    queryFn: () => dashboardApi.recent(10),
+    enabled: canReadAudit,
+  });
 
   return (
     <>
@@ -85,9 +94,16 @@ export default function OverviewPage() {
             </BackendStatus>
           </div>
 
+          {canReadAudit && (
           <div className="card">
             <div className="card-head">
               <div className="card-title">Recent activity</div>
+              <Link
+                href="/audit"
+                style={{ marginLeft: "auto", fontSize: 12, color: "var(--accent)", textDecoration: "none" }}
+              >
+                Full audit →
+              </Link>
             </div>
             <BackendStatus isLoading={recent.isLoading} error={recent.error}>
               <div style={{ padding: "4px 8px" }}>
@@ -120,6 +136,7 @@ export default function OverviewPage() {
               </div>
             </BackendStatus>
           </div>
+          )}
         </div>
       </div>
     </>

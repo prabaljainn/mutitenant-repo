@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icons/Icon";
 import { Icons } from "@/components/icons/icons";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { isOperatorAdmin } from "@/lib/auth/jwt";
 import { initials } from "@/lib/utils/initials";
 
 type NavLink = { href: string; label: string; icon: string; count?: number | string; match?: (path: string) => boolean };
@@ -47,6 +48,18 @@ export function Sidebar({
       count: operatorCount,
       match: (p) => p.startsWith("/operators"),
     },
+    // Audit is admin-only on the backend; hide it for SUPPORT entirely
+    // rather than render a link that 403s.
+    ...(isOperatorAdmin(claims)
+      ? [
+          {
+            href: "/audit",
+            label: "Audit",
+            icon: Icons.console,
+            match: (p: string) => p.startsWith("/audit"),
+          },
+        ]
+      : []),
     { href: "/settings", label: "Settings", icon: Icons.settings },
   ];
 

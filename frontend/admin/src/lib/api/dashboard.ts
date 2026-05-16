@@ -1,10 +1,9 @@
-// Spring exposes the dashboard counters at /admin/api/stats/overview. The
-// recent-activity feed isn't wired on the backend yet, so the API method
-// keeps the same signature but routes to a path that will return 404 →
-// NotImplementedError → the inline "Backend endpoint not implemented yet"
-// notice in <BackendStatus>.
+// Spring exposes the dashboard counters at /admin/api/stats/overview.
+// Recent activity is the tail of /admin/api/audit (admin-only) mapped
+// into the simpler ActivityRow shape the overview ticker renders.
 
 import { api } from "./client";
+import { toAuditRow, type SpringAuditEntry } from "./adapters";
 import type { ActivityRow, DashboardStats } from "./types";
 
 type SpringOverview = {
@@ -12,6 +11,10 @@ type SpringOverview = {
   tenantUsers: number;
   pendingInvites: number;
 };
+
+function humanAction(a: string): string {
+  return a.replace(/_/g, " ").toLowerCase();
+}
 
 export const dashboardApi = {
   stats: async (): Promise<DashboardStats> => {
@@ -22,6 +25,18 @@ export const dashboardApi = {
       pendingInvites: raw.pendingInvites,
     };
   },
-  recent: (limit = 10) =>
-    api<ActivityRow[]>(`/admin/api/audit/recent?limit=${limit}`),
+  recent: async (limit = 10): Promise<ActivityRow[]> => {
+    const rows = await api<SpringAuditEntry[]>(`/admin/api/audit?size=${limit}`);
+    return rows.map(toAuditRow).map((r) => ({
+      // Overview doesn't have operators/tenants loaded — fall back to
+      // raw ids. The dedicated /audit page resolves them properly.
+      actor: {
+        name: r.actorUserId ?? "system",
+        email: "",
+      },
+      verb: humanAction(r.action),
+      target: r.tenantId ?? "",
+      at: r.timestamp,
+    }));
+  },
 };

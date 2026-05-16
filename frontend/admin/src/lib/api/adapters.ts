@@ -3,7 +3,15 @@
 // place so when the backend gains the missing fields we can drop the
 // adapter without touching the UI.
 
-import type { Assignment, Member, MemberRole, Operator, OperatorRole, Tenant } from "./types";
+import type {
+  Assignment,
+  AuditRow,
+  Member,
+  MemberRole,
+  Operator,
+  OperatorRole,
+  Tenant,
+} from "./types";
 import { initials } from "@/lib/utils/initials";
 
 // Raw Spring shapes — match TenantDtos.java / TenantSelfDtos.java exactly.
@@ -141,6 +149,28 @@ export function toAssignment(s: SpringAssignment): Assignment {
     tenantId: s.tenantId,
     assignedBy: s.assignedBy,
     assignedAt: s.assignedAt,
+  };
+}
+
+// ─── Audit ───────────────────────────────────────────────────────────────────
+
+export type SpringAuditEntry = {
+  id: string;
+  timestamp: string;
+  actorUserId: string | null;
+  action: string;
+  tenantId: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+export function toAuditRow(s: SpringAuditEntry): AuditRow {
+  return {
+    id: s.id,
+    timestamp: s.timestamp,
+    actorUserId: s.actorUserId,
+    action: s.action,
+    tenantId: s.tenantId,
+    metadata: s.metadata ?? {},
   };
 }
 

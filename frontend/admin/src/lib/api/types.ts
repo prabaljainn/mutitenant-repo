@@ -75,6 +75,18 @@ export type ActivityRow = {
   at: string; // ISO
 };
 
+/** A single row from the audit log. Action is the raw enum string from
+ *  the backend (e.g. {@code TENANT_CREATED}); the UI maps it to a
+ *  human-readable verb in the table. */
+export type AuditRow = {
+  id: string;
+  timestamp: string;       // ISO
+  actorUserId: string | null;
+  action: string;
+  tenantId: string | null;
+  metadata: Record<string, unknown>;
+};
+
 export type LoginResponse = {
   accessToken: string;
   refreshToken: string;
