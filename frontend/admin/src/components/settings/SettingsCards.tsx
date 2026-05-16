@@ -8,7 +8,13 @@ import { settingsApi } from "@/lib/api/settings";
 import { DjiForm } from "./DjiForm";
 import { MqttForm } from "./MqttForm";
 
-export function SettingsCards({ tenantId }: { tenantId: string }) {
+export function SettingsCards({
+  tenantId,
+  canManage = true,
+}: {
+  tenantId: string;
+  canManage?: boolean;
+}) {
   const qc = useQueryClient();
   const mqtt = useQuery({
     queryKey: ["settings", tenantId, "mqtt"],
@@ -27,6 +33,7 @@ export function SettingsCards({ tenantId }: { tenantId: string }) {
         <MqttForm
           tenantId={tenantId}
           initial={mqtt.data}
+          canManage={canManage}
           onSaved={(next) => qc.setQueryData(["settings", tenantId, "mqtt"], next)}
         />
       </BackendStatus>
@@ -34,6 +41,7 @@ export function SettingsCards({ tenantId }: { tenantId: string }) {
         <DjiForm
           tenantId={tenantId}
           initial={dji.data}
+          canManage={canManage}
           onSaved={(next) => qc.setQueryData(["settings", tenantId, "dji"], next)}
         />
       </BackendStatus>

@@ -20,10 +20,12 @@ const DEFAULTS: MqttSettings = {
 export function MqttForm({
   tenantId,
   initial,
+  canManage = true,
   onSaved,
 }: {
   tenantId: string;
   initial: MqttSettings | undefined;
+  canManage?: boolean;
   onSaved: (next: MqttSettings) => void;
 }) {
   const [server, setServer] = useState<MqttSettings>(initial ?? DEFAULTS);
@@ -104,16 +106,16 @@ export function MqttForm({
       <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div className="field">
           <label className="field-label">Broker host</label>
-          <input className="input mono" placeholder="mqtt.example.com" {...bind("host")} />
+          <input className="input mono" placeholder="mqtt.example.com" {...bind("host")} disabled={!canManage} />
         </div>
         <div className="grid-2" style={{ gap: 12 }}>
           <div className="field">
             <label className="field-label">Port</label>
-            <input className="input mono" {...bind("port")} />
+            <input className="input mono" {...bind("port")} disabled={!canManage} />
           </div>
           <div className="field">
             <label className="field-label">Transport</label>
-            <select className="select" {...bind("transport")}>
+            <select className="select" {...bind("transport")} disabled={!canManage}>
               <option value="tls">TLS (8883)</option>
               <option value="ws">WebSocket (443)</option>
               <option value="tcp">TCP (1883)</option>
@@ -122,23 +124,25 @@ export function MqttForm({
         </div>
         <div className="field">
           <label className="field-label">Topic prefix</label>
-          <input className="input mono" {...bind("topicPrefix")} />
+          <input className="input mono" {...bind("topicPrefix")} disabled={!canManage} />
           <span className="field-hint">
             Drones publish to <span className="mono">{`{prefix}{droneId}/telemetry`}</span>.
           </span>
         </div>
         <div className="field">
           <label className="field-label">Username</label>
-          <input className="input mono" {...bind("username")} />
+          <input className="input mono" {...bind("username")} disabled={!canManage} />
         </div>
-        <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
-          <button className="btn" onClick={test} disabled={testing}>
-            <Icon d={Icons.refresh} size={14} /> {testing ? "Testing…" : "Test connection"}
-          </button>
-          <button className="btn btn-primary" onClick={save} disabled={!dirty || saving}>
-            {saving ? "Saving…" : "Save changes"}
-          </button>
-        </div>
+        {canManage && (
+          <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" onClick={test} disabled={testing}>
+              <Icon d={Icons.refresh} size={14} /> {testing ? "Testing…" : "Test connection"}
+            </button>
+            <button className="btn btn-primary" onClick={save} disabled={!dirty || saving}>
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

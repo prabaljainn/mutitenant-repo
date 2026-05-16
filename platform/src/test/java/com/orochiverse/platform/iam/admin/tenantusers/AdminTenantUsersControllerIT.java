@@ -25,6 +25,8 @@ import com.orochiverse.platform.common.security.passwords.PasswordHashing;
 import com.orochiverse.platform.common.security.principals.OperatorRole;
 import com.orochiverse.platform.common.security.principals.TenantRole;
 import com.orochiverse.platform.common.tenant.TenantId;
+import com.orochiverse.platform.iam.operators.OperatorAssignment;
+import com.orochiverse.platform.iam.operators.OperatorAssignmentRepository;
 import com.orochiverse.platform.iam.tenants.Tenant;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
 import com.orochiverse.platform.iam.users.UserRepository;
@@ -51,6 +53,7 @@ class AdminTenantUsersControllerIT {
     @LocalServerPort int port;
     @Autowired UserRepository users;
     @Autowired TenantRepository tenants;
+    @Autowired OperatorAssignmentRepository assignments;
     @Autowired PasswordHashing passwords;
     @Autowired AccessTokenIssuer issuer;
     @Autowired MongoClient mongo;
@@ -94,6 +97,8 @@ class AdminTenantUsersControllerIT {
 
     @AfterEach
     void cleanup() {
+        assignments.findAllByOperatorUserId(supportId)
+                .forEach(a -> assignments.deleteById(a.id()));
         users.deleteById(adminId);
         users.deleteById(supportId);
         users.deleteById(ownerUserId);
@@ -104,13 +109,24 @@ class AdminTenantUsersControllerIT {
 
     @Test
     @SuppressWarnings("unchecked")
-    void list_returns_only_the_tenants_users_for_any_operator() {
+    void list_returns_tenant_users_for_assigned_support() {
+        // SUPPORT must be assigned to see the tenant — list would 404 otherwise.
+        assignments.save(OperatorAssignment.grant(supportId, tenantId, adminId));
+
         var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users",
                 HttpMethod.GET, supportToken, null, List.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         var ids = resp.getBody().stream()
                 .map(r -> ((Map<String, Object>) r).get("id")).toList();
         assertThat(ids).contains(ownerUserId);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void unassigned_support_gets_404_on_tenant_users_list() {
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users",
+                HttpMethod.GET, supportToken, null, Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
     @Test

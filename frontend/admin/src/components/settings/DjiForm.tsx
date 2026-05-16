@@ -19,10 +19,12 @@ const DEFAULTS: DjiSettings = {
 export function DjiForm({
   tenantId,
   initial,
+  canManage = true,
   onSaved,
 }: {
   tenantId: string;
   initial: DjiSettings | undefined;
+  canManage?: boolean;
   onSaved: (next: DjiSettings) => void;
 }) {
   const [server, setServer] = useState<DjiSettings>(initial ?? DEFAULTS);
@@ -92,7 +94,7 @@ export function DjiForm({
       <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div className="field">
           <label className="field-label">DJI region</label>
-          <select className="select" {...bind("region")}>
+          <select className="select" {...bind("region")} disabled={!canManage}>
             <option value="ap">Asia Pacific</option>
             <option value="us">Americas</option>
             <option value="eu">Europe</option>
@@ -100,11 +102,11 @@ export function DjiForm({
         </div>
         <div className="field">
           <label className="field-label">Endpoint URL</label>
-          <input className="input mono" placeholder="https://api-cloud.dji.com" {...bind("endpoint")} />
+          <input className="input mono" placeholder="https://api-cloud.dji.com" {...bind("endpoint")} disabled={!canManage} />
         </div>
         <div className="field">
           <label className="field-label">App key</label>
-          <input className="input mono" placeholder="dji_app_key_…" {...bind("appKey")} />
+          <input className="input mono" placeholder="dji_app_key_…" {...bind("appKey")} disabled={!canManage} />
         </div>
         <div className="field">
           <label className="field-label">Callback URL</label>
@@ -116,11 +118,13 @@ export function DjiForm({
           </div>
           <span className="field-hint">Add this URL to your DJI developer console.</span>
         </div>
-        <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
-          <button className="btn btn-primary" onClick={save} disabled={!dirty || saving}>
-            {saving ? "Saving…" : "Save changes"}
-          </button>
-        </div>
+        {canManage && (
+          <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn btn-primary" onClick={save} disabled={!dirty || saving}>
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

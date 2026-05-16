@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode } from "react";
 
+import { operatorsApi } from "@/lib/api/operators";
 import { tenantsApi } from "@/lib/api/tenants";
 import { NotImplementedError } from "@/lib/api/types";
 import { useTheme } from "@/lib/theme/ThemeProvider";
@@ -19,6 +20,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
     queryFn: tenantsApi.list,
     select: (rows) => rows?.length ?? 0,
   });
+  const { data: operators } = useQuery({
+    queryKey: ["operators", "count"],
+    queryFn: () => operatorsApi.list("ACTIVE"),
+    select: (rows) => rows?.length ?? 0,
+  });
 
   return (
     <div
@@ -28,7 +34,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       data-sidebar={tweaks.sidebar}
       data-table={tweaks.table}
     >
-      <Sidebar tenantCount={tenants} />
+      <Sidebar tenantCount={tenants} operatorCount={operators} />
       <div className="main">{children}</div>
     </div>
   );

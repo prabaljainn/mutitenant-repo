@@ -16,6 +16,8 @@ import { Tabs, type TabDef } from "@/components/ui/Tabs";
 import { TenantMark } from "@/components/ui/TenantMark";
 import { membersApi, tenantsApi } from "@/lib/api/tenants";
 import { type MemberRole, type Tenant } from "@/lib/api/types";
+import { useAuth } from "@/lib/auth/AuthProvider";
+import { isOperatorAdmin } from "@/lib/auth/jwt";
 import { useToast } from "@/lib/toast/ToastProvider";
 import { formatGB } from "@/lib/utils/date";
 
@@ -26,6 +28,8 @@ const INVITE_ROLES: MemberRole[] = ["Admin", "Member"];
 export function TenantDetail({ tenantId }: { tenantId: string }) {
   const qc = useQueryClient();
   const { notify } = useToast();
+  const { claims } = useAuth();
+  const canManage = isOperatorAdmin(claims);
   const tenant = useQuery({ queryKey: ["tenants", tenantId], queryFn: () => tenantsApi.get(tenantId) });
   const members = useQuery({
     queryKey: ["tenants", tenantId, "members"],
@@ -117,7 +121,7 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
           <div className="row" style={{ gap: 14 }}>
             <TenantMark mark={t.mark} size={48} radius={10} fontSize={16} />
             <div>
-              {renaming ? (
+              {renaming && canManage ? (
                 <input
                   autoFocus
                   className="input"
@@ -136,18 +140,20 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
               ) : (
                 <div
                   className="page-title"
-                  onDoubleClick={() => setRenaming(true)}
-                  style={{ cursor: "text" }}
+                  onDoubleClick={canManage ? () => setRenaming(true) : undefined}
+                  style={canManage ? { cursor: "text" } : undefined}
                 >
                   {t.name}
-                  <button
-                    className="btn btn-ghost btn-icon btn-sm"
-                    style={{ marginLeft: 6, verticalAlign: "middle" }}
-                    onClick={() => setRenaming(true)}
-                    title="Rename tenant"
-                  >
-                    <Icon d={Icons.edit} size={13} />
-                  </button>
+                  {canManage && (
+                    <button
+                      className="btn btn-ghost btn-icon btn-sm"
+                      style={{ marginLeft: 6, verticalAlign: "middle" }}
+                      onClick={() => setRenaming(true)}
+                      title="Rename tenant"
+                    >
+                      <Icon d={Icons.edit} size={13} />
+                    </button>
+                  )}
                 </div>
               )}
               <div className="page-sub mono">{t.id}</div>
@@ -191,15 +197,25 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
           </div>
         )}
 
-        {tab === "members" && <MembersTab tenantId={tenantId} ownerUserId={t.ownerUserId} />}
+        {tab === "members" && (
+          <MembersTab tenantId={tenantId} ownerUserId={t.ownerUserId} canManage={canManage} />
+        )}
 
-        {tab === "settings" && <SettingsCards tenantId={tenantId} />}
+        {tab === "settings" && <SettingsCards tenantId={tenantId} canManage={canManage} />}
       </div>
     </>
   );
 }
 
-function MembersTab({ tenantId, ownerUserId }: { tenantId: string; ownerUserId: string | null }) {
+function MembersTab({
+  tenantId,
+  ownerUserId,
+  canManage,
+}: {
+  tenantId: string;
+  ownerUserId: string | null;
+  canManage: boolean;
+}) {
   const qc = useQueryClient();
   const { notify } = useToast();
   const members = useQuery({
@@ -269,7 +285,10 @@ function MembersTab({ tenantId, ownerUserId }: { tenantId: string; ownerUserId: 
   const list = members.data ?? [];
 
   return (
-    <div className="grid-2" style={{ gridTemplateColumns: "1.6fr 1fr" }}>
+    <div
+      className={canManage ? "grid-2" : ""}
+      style={canManage ? { gridTemplateColumns: "1.6fr 1fr" } : undefined}
+    >
       <Card>
         <CardHead title="Members" />
         <BackendStatus isLoading={members.isLoading} error={members.error}>
@@ -279,14 +298,14 @@ function MembersTab({ tenantId, ownerUserId }: { tenantId: string; ownerUserId: 
                 <th>Member</th>
                 <th>Role</th>
                 <th>Joined</th>
-                <th style={{ width: 32 }}></th>
+                {canManage && <th style={{ width: 32 }}></th>}
               </tr>
             </thead>
             <tbody>
               {list.length === 0 ? (
                 <tr>
-                  <td colSpan={4} style={{ padding: 24, textAlign: "center", color: "var(--fg-3)" }}>
-                    No members yet — invite someone →
+                  <td colSpan={canManage ? 4 : 3} style={{ padding: 24, textAlign: "center", color: "var(--fg-3)" }}>
+                    {canManage ? "No members yet — invite someone →" : "No members yet."}
                   </td>
                 </tr>
               ) : (
@@ -311,16 +330,18 @@ function MembersTab({ tenantId, ownerUserId }: { tenantId: string; ownerUserId: 
                       <td className="mono muted">
                         {m.status === "INVITED" ? "Invited" : formatGB(m.joinedAt)}
                       </td>
-                      <td>
-                        <button
-                          className="btn btn-ghost btn-icon btn-sm"
-                          onClick={() => remove.mutate(m.userId)}
-                          title="Remove"
-                          disabled={isOwner}
-                        >
-                          <Icon d={Icons.trash} size={14} />
-                        </button>
-                      </td>
+                      {canManage && (
+                        <td>
+                          <button
+                            className="btn btn-ghost btn-icon btn-sm"
+                            onClick={() => remove.mutate(m.userId)}
+                            title="Remove"
+                            disabled={isOwner}
+                          >
+                            <Icon d={Icons.trash} size={14} />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })
@@ -330,6 +351,7 @@ function MembersTab({ tenantId, ownerUserId }: { tenantId: string; ownerUserId: 
         </BackendStatus>
       </Card>
 
+      {canManage && (
       <Card>
         <CardHead title="Invite user" />
         <CardBody>
@@ -415,6 +437,7 @@ function MembersTab({ tenantId, ownerUserId }: { tenantId: string; ownerUserId: 
           </div>
         </CardBody>
       </Card>
+      )}
     </div>
   );
 }

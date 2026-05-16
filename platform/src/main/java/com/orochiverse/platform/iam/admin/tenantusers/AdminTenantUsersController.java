@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.orochiverse.platform.common.security.auth.AuthenticatedUser;
 import com.orochiverse.platform.common.tenant.TenantContext;
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.NotFoundException;
+import com.orochiverse.platform.iam.admin.common.OperatorVisibility;
 import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.InviteTenantUserRequest;
 import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.TenantUserResponse;
 import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.UpdateTenantUserRequest;
@@ -66,10 +67,14 @@ public class AdminTenantUsersController {
 
     private final TenantUsersService service;
     private final TenantRepository tenants;
+    private final OperatorVisibility visibility;
 
-    public AdminTenantUsersController(TenantUsersService service, TenantRepository tenants) {
+    public AdminTenantUsersController(TenantUsersService service,
+                                      TenantRepository tenants,
+                                      OperatorVisibility visibility) {
         this.service = service;
         this.tenants = tenants;
+        this.visibility = visibility;
     }
 
     @PostMapping
@@ -79,6 +84,7 @@ public class AdminTenantUsersController {
             @Valid @RequestBody InviteTenantUserRequest req,
             @AuthenticationPrincipal AuthenticatedUser caller) {
         requireLiveTenant(tenantId);
+        visibility.requireVisibility(tenantId);
         var resp = TenantContext.callIn(tenantId,
                 () -> service.invite(req, caller.claims().userId()));
         return ResponseEntity.status(HttpStatus.CREATED).body(resp);
@@ -89,6 +95,7 @@ public class AdminTenantUsersController {
     public List<TenantUserResponse> list(@PathVariable String tenantId,
                                          @RequestParam(required = false) UserStatus status) {
         requireLiveTenant(tenantId);
+        visibility.requireVisibility(tenantId);
         return TenantContext.callIn(tenantId, () -> service.list(status));
     }
 
@@ -96,6 +103,7 @@ public class AdminTenantUsersController {
     @PreAuthorize("hasRole('OPERATOR')")
     public TenantUserResponse get(@PathVariable String tenantId, @PathVariable String userId) {
         requireLiveTenant(tenantId);
+        visibility.requireVisibility(tenantId);
         return TenantContext.callIn(tenantId, () -> service.get(userId));
     }
 
@@ -106,6 +114,7 @@ public class AdminTenantUsersController {
                                      @Valid @RequestBody UpdateTenantUserRequest req,
                                      @AuthenticationPrincipal AuthenticatedUser caller) {
         requireLiveTenant(tenantId);
+        visibility.requireVisibility(tenantId);
         return TenantContext.callIn(tenantId,
                 () -> service.update(userId, req, caller.claims().userId()));
     }
@@ -116,6 +125,7 @@ public class AdminTenantUsersController {
                                        @PathVariable String userId,
                                        @AuthenticationPrincipal AuthenticatedUser caller) {
         requireLiveTenant(tenantId);
+        visibility.requireVisibility(tenantId);
         TenantContext.callIn(tenantId, () -> {
             service.softDelete(userId, caller.claims().userId());
             return null;

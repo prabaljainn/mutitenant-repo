@@ -20,6 +20,7 @@ import com.orochiverse.platform.common.audit.AuditEntryRepository;
 import com.orochiverse.platform.common.tenant.TenantDatabaseProvisioner;
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.ConflictException;
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.NotFoundException;
+import com.orochiverse.platform.iam.admin.common.OperatorVisibility;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.CreateTenantRequest;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.TenantResponse;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.UpdateTenantRequest;
@@ -66,17 +67,20 @@ public class TenantsAdminService {
     private final TenantRepository tenants;
     private final TenantDatabaseProvisioner provisioner;
     private final AuditEntryRepository audit;
+    private final OperatorVisibility visibility;
     private final org.springframework.beans.factory.ObjectProvider<
             com.orochiverse.platform.iam.settings.TenantSettingsService> settingsCleanup;
 
     public TenantsAdminService(TenantRepository tenants,
                                TenantDatabaseProvisioner provisioner,
                                AuditEntryRepository audit,
+                               OperatorVisibility visibility,
                                org.springframework.beans.factory.ObjectProvider<
                                        com.orochiverse.platform.iam.settings.TenantSettingsService> settingsCleanup) {
         this.tenants = tenants;
         this.provisioner = provisioner;
         this.audit = audit;
+        this.visibility = visibility;
         this.settingsCleanup = settingsCleanup;
     }
 
@@ -111,10 +115,19 @@ public class TenantsAdminService {
         } else {
             rows = tenants.findAllByDeletedAtIsNull();
         }
+        // Scope to what the caller is allowed to see. Admins see everything
+        // (allowedIds == null); SUPPORT only their assigned tenants.
+        var allowedIds = visibility.visibleTenantIdsOrUnrestricted();
+        if (allowedIds != null) {
+            rows = rows.stream().filter(t -> allowedIds.contains(t.id())).toList();
+        }
         return rows.stream().map(TenantResponse::from).toList();
     }
 
     public TenantResponse get(String id) {
+        // Throw the same 404 a missing/deleted tenant would so SUPPORT
+        // can't enumerate the customer list by probing ids.
+        visibility.requireVisibility(id);
         return TenantResponse.from(loadOrThrow(id));
     }
 

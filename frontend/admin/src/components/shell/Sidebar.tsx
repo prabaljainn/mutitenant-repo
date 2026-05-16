@@ -11,7 +11,13 @@ import { initials } from "@/lib/utils/initials";
 
 type NavLink = { href: string; label: string; icon: string; count?: number | string; match?: (path: string) => boolean };
 
-export function Sidebar({ tenantCount }: { tenantCount?: number }) {
+export function Sidebar({
+  tenantCount,
+  operatorCount,
+}: {
+  tenantCount?: number;
+  operatorCount?: number;
+}) {
   const pathname = usePathname() ?? "";
   const { claims, signOut } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -33,6 +39,13 @@ export function Sidebar({ tenantCount }: { tenantCount?: number }) {
       icon: Icons.building,
       count: tenantCount,
       match: (p) => p.startsWith("/tenants"),
+    },
+    {
+      href: "/operators",
+      label: "Operators",
+      icon: Icons.shield,
+      count: operatorCount,
+      match: (p) => p.startsWith("/operators"),
     },
     { href: "/settings", label: "Settings", icon: Icons.settings },
   ];

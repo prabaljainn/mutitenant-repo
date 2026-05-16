@@ -24,6 +24,8 @@ import com.orochiverse.platform.common.security.jwt.AccessTokenIssuer;
 import com.orochiverse.platform.common.security.passwords.PasswordHashing;
 import com.orochiverse.platform.common.security.principals.OperatorRole;
 import com.orochiverse.platform.common.tenant.TenantId;
+import com.orochiverse.platform.iam.operators.OperatorAssignment;
+import com.orochiverse.platform.iam.operators.OperatorAssignmentRepository;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
 import com.orochiverse.platform.iam.users.UserRepository;
 import com.orochiverse.platform.testsupport.IT;
@@ -44,6 +46,7 @@ class TenantsAdminControllerIT {
     @org.springframework.boot.test.web.server.LocalServerPort int port;
     @Autowired UserRepository users;
     @Autowired TenantRepository tenants;
+    @Autowired OperatorAssignmentRepository assignments;
     @Autowired PasswordHashing passwords;
     @Autowired AccessTokenIssuer issuer;
     @Autowired MongoClient mongo;
@@ -79,12 +82,20 @@ class TenantsAdminControllerIT {
 
     @AfterEach
     void cleanup() {
+        // Clean any assignments granted in the test before deleting users.
+        assignments.findAllByOperatorUserId(supportId)
+                .forEach(a -> assignments.deleteById(a.id()));
         users.deleteById(adminId);
         users.deleteById(supportId);
         for (String id : createdTenantIds) {
             tenants.deleteById(id);
             mongo.getDatabase(TenantId.dbName(id)).drop();
         }
+    }
+
+    /** Grants the test's SUPPORT operator visibility into a tenant. */
+    private void assignSupportTo(String tenantId) {
+        assignments.save(OperatorAssignment.grant(supportId, tenantId, adminId));
     }
 
     /** Creates a tenant via the API and records its server-assigned id. */
@@ -157,8 +168,9 @@ class TenantsAdminControllerIT {
     // ─────────────────────────────────────────────────────────────────────
 
     @Test
-    void list_visible_to_support_role() {
-        createTenant(adminToken, "Acme " + suffix);
+    void list_visible_to_support_role_for_assigned_tenants() {
+        String id = createTenant(adminToken, "Acme " + suffix);
+        assignSupportTo(id);
 
         var resp = IT.exchange(port, "/admin/api/tenants",
                 HttpMethod.GET, supportToken, null, List.class);
@@ -170,7 +182,8 @@ class TenantsAdminControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void list_filters_by_q_substring_case_insensitive() {
-        createTenant(adminToken, "Skyhawk-" + suffix);
+        String id = createTenant(adminToken, "Skyhawk-" + suffix);
+        assignSupportTo(id);
 
         var hits = IT.exchange(port, "/admin/api/tenants?q=skyhawk",
                 HttpMethod.GET, supportToken, null, List.class);
@@ -184,6 +197,71 @@ class TenantsAdminControllerIT {
                 HttpMethod.GET, supportToken, null, List.class);
         assertThat(misses.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(misses.getBody()).isEmpty();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // SUPPORT visibility scoping (assignments-based)
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void support_without_assignment_sees_no_tenants_in_list() {
+        // Admin creates a tenant. Support has no assignment to it.
+        createTenant(adminToken, "Hidden " + suffix);
+
+        var resp = IT.exchange(port, "/admin/api/tenants",
+                HttpMethod.GET, supportToken, null, List.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        // The created tenant must not surface for unassigned SUPPORT.
+        // Other tests in parallel may have unrelated rows, so we check
+        // that none belong to this suffix.
+        List<String> names = (List<String>) resp.getBody().stream()
+                .map(r -> ((Map<String, Object>) r).get("name").toString())
+                .toList();
+        assertThat(names).noneMatch(n -> n.contains(suffix));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void support_without_assignment_gets_404_on_tenant_get() {
+        String id = createTenant(adminToken, "Hidden " + suffix);
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + id,
+                HttpMethod.GET, supportToken, null, Map.class);
+
+        // 404, not 403 — defense-in-depth so SUPPORT can't enumerate ids.
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(resp.getBody()).containsEntry("error", "not_found");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void support_with_assignment_can_get_tenant() {
+        String id = createTenant(adminToken, "Visible " + suffix);
+        assignSupportTo(id);
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + id,
+                HttpMethod.GET, supportToken, null, Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).containsEntry("id", id);
+    }
+
+    @Test
+    void admin_sees_every_tenant_regardless_of_assignments() {
+        String id1 = createTenant(adminToken, "A " + suffix);
+        String id2 = createTenant(adminToken, "B " + suffix);
+
+        var resp = IT.exchange(port, "/admin/api/tenants",
+                HttpMethod.GET, adminToken, null, List.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        @SuppressWarnings("unchecked")
+        List<String> ids = (List<String>) resp.getBody().stream()
+                .map(r -> ((java.util.Map<String, Object>) r).get("id"))
+                .toList();
+        assertThat(ids).contains(id1, id2);
     }
 
     @Test

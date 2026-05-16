@@ -1,5 +1,6 @@
 package com.orochiverse.platform.iam.users;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -35,4 +36,10 @@ public interface UserRepository extends MongoRepository<User, String> {
     long countByKindAndStatus(UserKind kind, UserStatus status);
 
     long countByStatus(UserStatus status);
+
+    /** Tenant-scoped variants — power overview counts for SUPPORT operators. */
+    long countByKindAndStatusAndTenantIdIn(UserKind kind, UserStatus status,
+                                           Collection<String> tenantIds);
+
+    long countByKindAndTenantIdIn(UserKind kind, Collection<String> tenantIds);
 }

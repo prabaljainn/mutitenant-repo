@@ -3,7 +3,7 @@
 // place so when the backend gains the missing fields we can drop the
 // adapter without touching the UI.
 
-import type { Member, MemberRole, Tenant } from "./types";
+import type { Assignment, Member, MemberRole, Operator, OperatorRole, Tenant } from "./types";
 import { initials } from "@/lib/utils/initials";
 
 // Raw Spring shapes — match TenantDtos.java / TenantSelfDtos.java exactly.
@@ -28,6 +28,26 @@ export type SpringTenantUser = {
   lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type SpringOperator = {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  status: "INVITED" | "ACTIVE" | "SUSPENDED" | "DELETED";
+  role: "OPERATOR_ADMIN" | "OPERATOR_SUPPORT";
+  lastLoginAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SpringAssignment = {
+  id: string;
+  operatorUserId: string;
+  tenantId: string;
+  assignedBy: string;
+  assignedAt: string;
 };
 
 // Spring's settings store envelope. The kind-specific fields live under
@@ -81,6 +101,46 @@ export function toMember(s: SpringTenantUser): Member {
     role: ROLE_FROM_WIRE[s.role],
     status: s.status,
     joinedAt: s.status === "INVITED" ? null : s.createdAt,
+  };
+}
+
+// ─── Operator ────────────────────────────────────────────────────────────────
+
+const OP_ROLE_TO_WIRE: Record<OperatorRole, SpringOperator["role"]> = {
+  Admin: "OPERATOR_ADMIN",
+  Support: "OPERATOR_SUPPORT",
+};
+const OP_ROLE_FROM_WIRE: Record<SpringOperator["role"], OperatorRole> = {
+  OPERATOR_ADMIN: "Admin",
+  OPERATOR_SUPPORT: "Support",
+};
+
+export function operatorRoleToWire(role: OperatorRole): SpringOperator["role"] {
+  return OP_ROLE_TO_WIRE[role];
+}
+
+export function toOperator(s: SpringOperator): Operator {
+  const name = [s.firstName, s.lastName].filter(Boolean).join(" ").trim() || s.email;
+  return {
+    id: s.id,
+    email: s.email,
+    firstName: s.firstName,
+    lastName: s.lastName,
+    name,
+    role: OP_ROLE_FROM_WIRE[s.role],
+    status: s.status,
+    lastLoginAt: s.lastLoginAt,
+    createdAt: s.createdAt,
+  };
+}
+
+export function toAssignment(s: SpringAssignment): Assignment {
+  return {
+    id: s.id,
+    operatorUserId: s.operatorUserId,
+    tenantId: s.tenantId,
+    assignedBy: s.assignedBy,
+    assignedAt: s.assignedAt,
   };
 }
 

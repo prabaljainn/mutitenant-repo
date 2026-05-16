@@ -1,5 +1,6 @@
 package com.orochiverse.platform.iam.tenants;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -20,6 +21,9 @@ public interface TenantRepository extends MongoRepository<Tenant, String> {
 
     /** Counts live (non-soft-deleted) tenants — the stat the dashboard wants. */
     long countByDeletedAtIsNull();
+
+    /** Same, but only within a given id set — scoped overview stats for SUPPORT. */
+    long countByDeletedAtIsNullAndIdIn(Collection<String> ids);
 
     /** Lists every live tenant. Soft-deleted rows are excluded. */
     List<Tenant> findAllByDeletedAtIsNull();

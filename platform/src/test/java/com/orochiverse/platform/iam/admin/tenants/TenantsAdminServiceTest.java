@@ -13,6 +13,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
 import com.orochiverse.platform.common.tenant.TenantDatabaseProvisioner;
 import com.orochiverse.platform.common.tenant.TenantId;
+import com.orochiverse.platform.iam.admin.common.OperatorVisibility;
 import com.orochiverse.platform.iam.settings.TenantSettingsService;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
 
@@ -101,7 +102,8 @@ class TenantsAdminServiceTest {
     private static TenantsAdminService newService(TenantRepository tenants) {
         var provisioner = mock(TenantDatabaseProvisioner.class);
         var audit = mock(AuditEntryRepository.class);
+        var visibility = mock(OperatorVisibility.class);
         var settings = (ObjectProvider<TenantSettingsService>) mock(ObjectProvider.class);
-        return new TenantsAdminService(tenants, provisioner, audit, settings);
+        return new TenantsAdminService(tenants, provisioner, audit, visibility, settings);
     }
 }

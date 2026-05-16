@@ -6,6 +6,29 @@
 export type MemberRole = "Admin" | "Member";
 export type MemberStatus = "ACTIVE" | "INVITED" | "SUSPENDED" | "DELETED";
 
+export type OperatorRole = "Admin" | "Support";
+export type OperatorStatus = "ACTIVE" | "INVITED" | "SUSPENDED" | "DELETED";
+
+export type Operator = {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  name: string;            // firstName + lastName, joined
+  role: OperatorRole;
+  status: OperatorStatus;
+  lastLoginAt: string | null;
+  createdAt: string;
+};
+
+export type Assignment = {
+  id: string;
+  operatorUserId: string;
+  tenantId: string;
+  assignedBy: string;
+  assignedAt: string;
+};
+
 export type Tenant = {
   id: string;
   name: string;

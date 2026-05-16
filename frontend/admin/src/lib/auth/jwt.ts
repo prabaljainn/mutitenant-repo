@@ -10,6 +10,7 @@ export type AccessClaims = {
   iss?: string;
   // Orochiverse backend extras
   kind?: "OPERATOR" | "TENANT_USER";
+  opRole?: "OPERATOR_ADMIN" | "OPERATOR_SUPPORT";
   tv?: number;           // token version
   activeTenantId?: string | null;
   // Design-spec aliases (older shape) — accept either.
@@ -40,6 +41,16 @@ export function decodeJwt(token: string): AccessClaims | null {
 export function isSuperAdmin(claims: AccessClaims | null): boolean {
   if (!claims) return false;
   return claims.kind === "OPERATOR" || claims.systemRole === "SUPER_ADMIN";
+}
+
+/** True only for {@code OPERATOR_ADMIN} — used to gate write controls
+ *  (invite operator, change role/status, soft-delete, grant/revoke
+ *  assignments). The backend already 403s SUPPORT on these endpoints;
+ *  this helper just keeps the buttons out of the UI so SUPPORT doesn't
+ *  click and get a toast. */
+export function isOperatorAdmin(claims: AccessClaims | null): boolean {
+  if (!claims) return false;
+  return claims.kind === "OPERATOR" && claims.opRole === "OPERATOR_ADMIN";
 }
 
 export function isExpired(claims: AccessClaims | null, skewSeconds = 30): boolean {

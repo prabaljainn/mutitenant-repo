@@ -11,6 +11,8 @@ import { NewTenantModal } from "@/components/tenants/NewTenantModal";
 import { BackendStatus } from "@/components/ui/EmptyState";
 import { TenantMark } from "@/components/ui/TenantMark";
 import { tenantsApi } from "@/lib/api/tenants";
+import { useAuth } from "@/lib/auth/AuthProvider";
+import { isOperatorAdmin } from "@/lib/auth/jwt";
 import { useToast } from "@/lib/toast/ToastProvider";
 import { formatGB } from "@/lib/utils/date";
 
@@ -18,6 +20,8 @@ export default function TenantsListPage() {
   const router = useRouter();
   const qc = useQueryClient();
   const { notify } = useToast();
+  const { claims } = useAuth();
+  const canManage = isOperatorAdmin(claims);
   const [q, setQ] = useState("");
   const [newOpen, setNewOpen] = useState(false);
 
@@ -41,9 +45,11 @@ export default function TenantsListPage() {
   return (
     <>
       <Topbar crumbs={[{ label: "Admin", href: "/overview" }, { label: "Tenants" }]}>
-        <button className="btn btn-primary" onClick={() => setNewOpen(true)}>
-          <Icon d={Icons.plus} size={14} /> New tenant
-        </button>
+        {canManage && (
+          <button className="btn btn-primary" onClick={() => setNewOpen(true)}>
+            <Icon d={Icons.plus} size={14} /> New tenant
+          </button>
+        )}
       </Topbar>
       <div className="page">
         <div className="page-head">
