@@ -1,22 +1,50 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import { MetadataView } from "@/components/audit/MetadataView";
 import { Icon } from "@/components/icons/Icon";
 import { Icons } from "@/components/icons/icons";
 import { Topbar } from "@/components/shell/Topbar";
 import { Chip } from "@/components/ui/Chip";
 import { BackendStatus } from "@/components/ui/EmptyState";
-import { auditApi, type AuditQuery } from "@/lib/api/audit";
+import { auditApi, AUDIT_ACTIONS, type AuditQuery } from "@/lib/api/audit";
 import { operatorsApi } from "@/lib/api/operators";
 import { tenantsApi } from "@/lib/api/tenants";
 import type { AuditRow } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { isOperatorAdmin } from "@/lib/auth/jwt";
-import { formatGB } from "@/lib/utils/date";
+import { formatGB, formatTime } from "@/lib/utils/date";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZES = [25, 50, 100, 200] as const;
+const DEFAULT_PAGE_SIZE = 50;
+
+/** Shared column widths for the header table and the body table. Both
+ *  must render the same colgroup so the dual-container layout stays
+ *  aligned.
+ *
+ *  Percentages instead of px so the columns redistribute cleanly at
+ *  any viewport width. Details is intentionally narrow — its cell
+ *  only ever holds "N fields ▸" or "—"; the freed slack goes to the
+ *  Actor/Action/Tenant columns where the long content lives.
+ *
+ *  Order: When / Actor / Action / Tenant / Details.
+ *  No whitespace or comments allowed between {@code <col />} elements —
+ *  React renders text nodes into the DOM and {@code <colgroup>} rejects
+ *  non-{@code <col>} children, which trips the hydration check. */
+function AuditColGroup() {
+  return (
+    <colgroup>
+      <col style={{ width: "12%" }} />
+      <col style={{ width: "28%" }} />
+      <col style={{ width: "20%" }} />
+      <col style={{ width: "20%" }} />
+      <col style={{ width: "20%" }} />
+    </colgroup>
+  );
+}
 
 // Coarse coloring of actions so the table reads at a glance.
 function actionVariant(action: string): "good" | "warn" | "bad" | "info" | "muted" {
@@ -40,24 +68,42 @@ function humanAction(action: string): string {
 }
 
 export default function AuditPage() {
+  const router = useRouter();
   const { claims } = useAuth();
   const canRead = isOperatorAdmin(claims);
 
   const [actorFilter, setActorFilter] = useState<string>("");
   const [tenantFilter, setTenantFilter] = useState<string>("");
+  const [actionFilter, setActionFilter] = useState<string>("");
+  // ISO date strings (YYYY-MM-DD) from <input type="date">. Converted to
+  // full instants when serialized for the API call.
+  const [sinceDate, setSinceDate] = useState<string>("");
+  const [untilDate, setUntilDate] = useState<string>("");
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [page, setPage] = useState(0);
 
-  // Resets page when a filter changes so the user doesn't land on an
-  // empty trailing page from a stale offset.
-  function setFilter(kind: "actor" | "tenant", value: string) {
+  // Backend takes one filter at a time. Setting any filter clears the
+  // others and rewinds to page 0 so the user doesn't land on an empty
+  // trailing page from a stale offset.
+  function setFilter(kind: "actor" | "tenant" | "action", value: string) {
     if (kind === "actor") {
       setActorFilter(value);
-      // The backend only accepts one filter at a time; clear the other so
-      // the active filter is unambiguous.
-      if (value) setTenantFilter("");
-    } else {
+      if (value) {
+        setTenantFilter("");
+        setActionFilter("");
+      }
+    } else if (kind === "tenant") {
       setTenantFilter(value);
-      if (value) setActorFilter("");
+      if (value) {
+        setActorFilter("");
+        setActionFilter("");
+      }
+    } else {
+      setActionFilter(value);
+      if (value) {
+        setActorFilter("");
+        setTenantFilter("");
+      }
     }
     setPage(0);
   }
@@ -66,10 +112,15 @@ export default function AuditPage() {
     () => ({
       actorUserId: actorFilter || undefined,
       tenantId: tenantFilter || undefined,
+      action: actionFilter || undefined,
+      // Inclusive bounds: since = 00:00:00 of the picked day,
+      // until = 23:59:59.999 so the chosen day is fully covered.
+      since: sinceDate ? new Date(sinceDate + "T00:00:00").toISOString() : undefined,
+      until: untilDate ? new Date(untilDate + "T23:59:59.999").toISOString() : undefined,
       page,
-      size: PAGE_SIZE,
+      size: pageSize,
     }),
-    [actorFilter, tenantFilter, page],
+    [actorFilter, tenantFilter, actionFilter, sinceDate, untilDate, page, pageSize],
   );
 
   const rows = useQuery({
@@ -118,7 +169,7 @@ export default function AuditPage() {
 
   const list = rows.data ?? [];
   const atFirst = page === 0;
-  const atLast = list.length < PAGE_SIZE;
+  const atLast = list.length < pageSize;
 
   return (
     <>
@@ -135,8 +186,11 @@ export default function AuditPage() {
 
         <BackendStatus isLoading={rows.isLoading} error={rows.error}>
           <div className="tbl-wrap">
+            {/* Toolbar = filters only. Pagination + rows-per-page live
+                in the footer beneath the table so the toolbar doesn't
+                fight for horizontal space with the date pickers. */}
             <div className="tbl-toolbar">
-              <div className="field" style={{ minWidth: 220 }}>
+              <div className="field" style={{ minWidth: 200 }}>
                 <label className="field-label">Actor</label>
                 <select
                   className="select"
@@ -151,7 +205,7 @@ export default function AuditPage() {
                   ))}
                 </select>
               </div>
-              <div className="field" style={{ minWidth: 220, marginLeft: 12 }}>
+              <div className="field" style={{ minWidth: 200, marginLeft: 12 }}>
                 <label className="field-label">Tenant</label>
                 <select
                   className="select"
@@ -166,39 +220,85 @@ export default function AuditPage() {
                   ))}
                 </select>
               </div>
-              <div className="grow" />
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <button
-                  className="btn btn-ghost btn-icon btn-sm"
-                  disabled={atFirst}
-                  onClick={() => setPage((p) => Math.max(0, p - 1))}
-                  title="Previous page"
+              <div className="field" style={{ minWidth: 200, marginLeft: 12 }}>
+                <label className="field-label">Action</label>
+                <select
+                  className="select"
+                  value={actionFilter}
+                  onChange={(e) => setFilter("action", e.target.value)}
                 >
-                  <Icon d={Icons.arrowL} size={14} />
-                </button>
-                <span className="mono muted" style={{ fontSize: 12 }}>
-                  page {page + 1}
-                </span>
-                <button
-                  className="btn btn-ghost btn-icon btn-sm"
-                  disabled={atLast}
-                  onClick={() => setPage((p) => p + 1)}
-                  title="Next page"
-                >
-                  <Icon d={Icons.arrowR} size={14} />
-                </button>
+                  <option value="">Any action</option>
+                  {AUDIT_ACTIONS.map((g) => (
+                    <optgroup key={g.group} label={g.group}>
+                      {g.values.map((v) => (
+                        <option key={v} value={v}>
+                          {humanAction(v)}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
               </div>
+              <div className="field" style={{ minWidth: 140, marginLeft: 12 }}>
+                <label className="field-label">From</label>
+                <input
+                  className="input"
+                  type="date"
+                  value={sinceDate}
+                  onChange={(e) => {
+                    setSinceDate(e.target.value);
+                    setPage(0);
+                  }}
+                />
+              </div>
+              <div className="field" style={{ minWidth: 140, marginLeft: 12 }}>
+                <label className="field-label">To</label>
+                <input
+                  className="input"
+                  type="date"
+                  value={untilDate}
+                  onChange={(e) => {
+                    setUntilDate(e.target.value);
+                    setPage(0);
+                  }}
+                />
+              </div>
+              <div className="grow" />
             </div>
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th style={{ width: 180 }}>When</th>
-                  <th>Actor</th>
-                  <th>Action</th>
-                  <th>Tenant</th>
-                  <th>Details</th>
-                </tr>
-              </thead>
+
+            {/* Dual-container table — header table on top, scrolling
+                body table below. Both share the same <colgroup>; the
+                first four columns are fixed-width and the last
+                ("Details") absorbs any width difference. When the body
+                shows a scrollbar, its table is ~15px narrower so the
+                Details column shrinks by 15px; every other column
+                boundary stays aligned with the header above. */}
+            <div style={{ overflow: "hidden" }}>
+              <table className="tbl" style={{ tableLayout: "fixed", width: "100%" }}>
+                <AuditColGroup />
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Actor</th>
+                    <th>Action</th>
+                    <th>Tenant</th>
+                    <th>Details</th>
+                  </tr>
+                </thead>
+              </table>
+            </div>
+            <div
+              style={{
+                // Reserve enough room for topbar + page head + toolbar +
+                // header-row + footer + page padding. Tuned by eye so
+                // the body fills the viewport without pushing the
+                // footer off-screen on a typical 13–15" monitor.
+                maxHeight: "calc(100vh - 340px)",
+                overflowY: "auto",
+              }}
+            >
+            <table className="tbl" style={{ tableLayout: "fixed", width: "100%" }}>
+              <AuditColGroup />
               <tbody>
                 {list.length === 0 ? (
                   <tr>
@@ -215,28 +315,69 @@ export default function AuditPage() {
                     const t = r.tenantId ? tenantById.get(r.tenantId) : null;
                     return (
                       <tr key={r.id}>
-                        <td className="mono muted">{formatGB(r.timestamp)}</td>
+                        <td className="mono muted">
+                          <div>{formatGB(r.timestamp)}</div>
+                          <div style={{ fontSize: 11, color: "var(--fg-3)" }}>
+                            {formatTime(r.timestamp)}
+                          </div>
+                        </td>
                         <td>
                           {op ? (
-                            <div>
-                              <div className="user-cell-name">{op.name}</div>
-                              <div className="user-cell-email">{op.email}</div>
-                            </div>
+                            <button
+                              type="button"
+                              className="btn btn-ghost mono"
+                              style={{
+                                padding: 0,
+                                textAlign: "left",
+                                background: "transparent",
+                                border: 0,
+                                cursor: "pointer",
+                                fontSize: 12,
+                              }}
+                              onClick={() => router.push(`/operators/${op.id}`)}
+                              title={`${op.name} — open operator`}
+                            >
+                              {op.email}
+                            </button>
                           ) : (
                             <span className="mono muted">{r.actorUserId ?? "system"}</span>
                           )}
                         </td>
                         <td>
-                          <Chip variant={actionVariant(r.action)} dot={false}>
-                            {humanAction(r.action)}
-                          </Chip>
+                          <button
+                            type="button"
+                            style={{
+                              background: "transparent",
+                              border: 0,
+                              padding: 0,
+                              cursor: "pointer",
+                            }}
+                            onClick={() => setFilter("action", r.action)}
+                            title="Filter by this action"
+                          >
+                            <Chip variant={actionVariant(r.action)} dot={false}>
+                              {humanAction(r.action)}
+                            </Chip>
+                          </button>
                         </td>
                         <td>
-                          {t ? (
-                            <div>
-                              <div className="user-cell-name">{t.name}</div>
-                              <div className="user-cell-email mono">{t.id}</div>
-                            </div>
+                          {r.tenantId ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost mono"
+                              style={{
+                                padding: 0,
+                                textAlign: "left",
+                                background: "transparent",
+                                border: 0,
+                                cursor: "pointer",
+                                fontSize: 12,
+                              }}
+                              onClick={() => router.push(`/tenants/${r.tenantId}`)}
+                              title={t ? `Open ${t.name}` : "Open tenant"}
+                            >
+                              {r.tenantId}
+                            </button>
                           ) : (
                             <span className="muted">—</span>
                           )}
@@ -246,25 +387,20 @@ export default function AuditPage() {
                             <span className="muted">—</span>
                           ) : (
                             <details>
-                              <summary className="muted" style={{ cursor: "pointer", fontSize: 12 }}>
+                              <summary
+                                className="muted"
+                                style={{ cursor: "pointer", fontSize: 12 }}
+                              >
                                 {Object.keys(r.metadata).length} field
                                 {Object.keys(r.metadata).length === 1 ? "" : "s"}
                               </summary>
-                              <pre
-                                className="mono"
-                                style={{
-                                  fontSize: 11,
-                                  marginTop: 6,
-                                  padding: 8,
-                                  background: "var(--bg)",
-                                  border: "1px solid var(--border)",
-                                  borderRadius: 4,
-                                  overflowX: "auto",
-                                  maxWidth: 360,
-                                }}
-                              >
-                                {JSON.stringify(r.metadata, null, 2)}
-                              </pre>
+                              <div style={{ marginTop: 6 }}>
+                                <MetadataView
+                                  metadata={r.metadata}
+                                  operatorById={operatorById}
+                                  tenantById={tenantById}
+                                />
+                              </div>
                             </details>
                           )}
                         </td>
@@ -274,6 +410,58 @@ export default function AuditPage() {
                 )}
               </tbody>
             </table>
+            </div>
+
+            {/* Footer: rows-per-page + page nav. Stays in flow below
+                the scrolling body so the toolbar can be filters-only. */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "4px 14px",
+                borderTop: "1px solid var(--border)",
+                fontSize: 12,
+              }}
+            >
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <span className="muted">Rows per page</span>
+                <select
+                  className="select"
+                  style={{ width: "auto", minWidth: 70 }}
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(0);
+                  }}
+                >
+                  {PAGE_SIZES.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button
+                  className="btn btn-ghost btn-icon btn-sm"
+                  disabled={atFirst}
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  title="Previous page"
+                >
+                  <Icon d={Icons.arrowL} size={14} />
+                </button>
+                <span className="mono muted">page {page + 1}</span>
+                <button
+                  className="btn btn-ghost btn-icon btn-sm"
+                  disabled={atLast}
+                  onClick={() => setPage((p) => p + 1)}
+                  title="Next page"
+                >
+                  <Icon d={Icons.arrowR} size={14} />
+                </button>
+              </div>
+            </div>
           </div>
         </BackendStatus>
       </div>

@@ -123,4 +123,47 @@ class AuditAdminControllerIT {
                 HttpMethod.GET, supportToken, null, List.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void filter_by_action_returns_only_matching_rows() {
+        // setUp seeded one OPERATOR_INVITED row plus one LOGIN_SUCCESS.
+        var resp = IT.exchange(port, "/admin/api/audit?action=OPERATOR_INVITED",
+                HttpMethod.GET, adminToken, null, List.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        var rows = resp.getBody();
+        assertThat(rows).isNotEmpty();
+        rows.forEach(r -> {
+            var entry = (Map<String, Object>) r;
+            assertThat(entry).containsEntry("action", "OPERATOR_INVITED");
+        });
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void filter_by_date_range_excludes_rows_outside_window() {
+        // Seed an entry stamped well in the past so we can prove the
+        // since filter excludes it.
+        var oldEntry = new AuditEntry(null,
+                java.time.Instant.parse("2020-01-01T00:00:00Z"),
+                adminId, AuditAction.LOGIN_SUCCESS, null, null, null,
+                Map.of(), null, null);
+        audit.save(oldEntry);
+
+        // Window starts in 2025 — should miss the 2020 row but include the
+        // ones the @BeforeEach just saved.
+        var resp = IT.exchange(port,
+                "/admin/api/audit?since=2025-01-01T00:00:00Z",
+                HttpMethod.GET, adminToken, null, List.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        var rows = resp.getBody();
+        rows.forEach(r -> {
+            var entry = (Map<String, Object>) r;
+            var ts = entry.get("timestamp").toString();
+            // ISO timestamps sort lexically when they share the format.
+            assertThat(ts.compareTo("2025-01-01T00:00:00Z") >= 0).isTrue();
+        });
+    }
 }

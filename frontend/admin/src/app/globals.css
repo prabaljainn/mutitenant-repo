@@ -334,7 +334,13 @@ button { font-family: inherit; }
 
 /* ---------- INPUTS ---------- */
 .field { display: flex; flex-direction: column; gap: 6px; }
-.field-label { font-size: 12px; font-weight: 500; color: var(--fg-2); }
+.field-label {
+  font-size: 12px; font-weight: 500; color: var(--fg-2);
+  /* Aligns label text with the inner padding of .input / .select so
+     the label's start matches the placeholder/value start instead of
+     sitting under the input's left border. */
+  padding-left: 10px;
+}
 .field-hint  { font-size: 11px; color: var(--fg-3); }
 .input, .select, .textarea {
   width: 100%;

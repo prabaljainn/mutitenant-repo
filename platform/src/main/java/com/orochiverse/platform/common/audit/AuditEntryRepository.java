@@ -21,6 +21,25 @@ public interface AuditEntryRepository extends MongoRepository<AuditEntry, String
 
     List<AuditEntry> findAllByTenantIdOrderByTimestampDesc(String tenantId, Pageable page);
 
+    List<AuditEntry> findAllByActionOrderByTimestampDesc(AuditAction action, Pageable page);
+
     List<AuditEntry> findAllByActionAndTimestampAfterOrderByTimestampDesc(
             AuditAction action, Instant after, Pageable page);
+
+    // ─── Date-range variants ──────────────────────────────────────────
+    // The controller always passes a since/until pair (padding open-ended
+    // bounds with EPOCH/far-future sentinels), so we only need one Between
+    // method per categorical filter.
+
+    List<AuditEntry> findAllByTimestampBetweenOrderByTimestampDesc(
+            Instant from, Instant to, Pageable page);
+
+    List<AuditEntry> findAllByActorUserIdAndTimestampBetweenOrderByTimestampDesc(
+            String actorUserId, Instant from, Instant to, Pageable page);
+
+    List<AuditEntry> findAllByTenantIdAndTimestampBetweenOrderByTimestampDesc(
+            String tenantId, Instant from, Instant to, Pageable page);
+
+    List<AuditEntry> findAllByActionAndTimestampBetweenOrderByTimestampDesc(
+            AuditAction action, Instant from, Instant to, Pageable page);
 }

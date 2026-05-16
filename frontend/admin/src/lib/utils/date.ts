@@ -14,6 +14,21 @@ export function formatGB(iso: string | null | undefined): string {
   return formatter.format(d);
 }
 
+const timeFormatter = new Intl.DateTimeFormat("en-GB", {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+/** Wall-clock time only — "14:32:07" — for pairing with a date elsewhere. */
+export function formatTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return timeFormatter.format(d);
+}
+
 const relativeFormatter = new Intl.RelativeTimeFormat("en-GB", { numeric: "auto" });
 
 /** "14 min ago" / "2 h ago" / "yesterday" style relative timestamp. */
