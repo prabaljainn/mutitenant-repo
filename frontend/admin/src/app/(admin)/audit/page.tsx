@@ -2,13 +2,13 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 
-// useSearchParams() bails out of static prerender. Without this, `next
-// build` errors with "should be wrapped in a suspense boundary". The
-// page is auth-gated and renders nothing meaningful without the JWT
-// anyway — no prerender shell worth keeping.
-export const dynamic = "force-dynamic";
+// useSearchParams() needs a Suspense boundary above the component or
+// the Next.js 15 static-prerender pass errors. The page is auth-gated
+// and renders nothing meaningful without a JWT, so fallback={null} is
+// fine — the AuthBridge will swap in the real content the instant the
+// client mounts.
 
 import { MetadataView } from "@/components/audit/MetadataView";
 import { Icon } from "@/components/icons/Icon";
@@ -74,6 +74,14 @@ function humanAction(action: string): string {
 }
 
 export default function AuditPage() {
+  return (
+    <Suspense fallback={null}>
+      <AuditPageImpl />
+    </Suspense>
+  );
+}
+
+function AuditPageImpl() {
   const router = useRouter();
   const search = useSearchParams();
   const { claims } = useAuth();

@@ -2,12 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState, type FormEvent } from "react";
-
-// Same reason as /accept-invite — useSearchParams() needs to bail out
-// of static prerender, and this page is useless without the token in
-// the URL anyway.
-export const dynamic = "force-dynamic";
+import { Suspense, useMemo, useState, type FormEvent } from "react";
 
 import { AuthRadar } from "@/components/auth/AuthRadar";
 import { resetPassword } from "@/lib/api/auth";
@@ -15,7 +10,17 @@ import { useTheme } from "@/lib/theme/ThemeProvider";
 
 const MIN_PASSWORD_LENGTH = 8;
 
+// Same Suspense wrapping pattern as /accept-invite — useSearchParams()
+// requires a boundary or the static-prerender pass errors.
 export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={null}>
+      <ResetPasswordImpl />
+    </Suspense>
+  );
+}
+
+function ResetPasswordImpl() {
   const router = useRouter();
   const { tweaks } = useTheme();
   const params = useSearchParams();

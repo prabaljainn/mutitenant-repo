@@ -2,13 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState, type FormEvent } from "react";
-
-// useSearchParams() bails out of static prerender. Without this, `next
-// build` errors with "should be wrapped in a suspense boundary". The
-// page has no useful prerenderable shell anyway — the token from the
-// URL is the only thing that matters.
-export const dynamic = "force-dynamic";
+import { Suspense, useMemo, useState, type FormEvent } from "react";
 
 import { AuthRadar } from "@/components/auth/AuthRadar";
 import { acceptInvite } from "@/lib/api/auth";
@@ -23,7 +17,19 @@ type ActivationResult =
   | { kind: "TENANT_USER" }
   | { kind: "UNKNOWN" };
 
+// useSearchParams() bails the Next.js 15 static-prerender pass unless
+// the calling component sits under a <Suspense> boundary. This page is
+// useless without the URL token, so the fallback is `null` — instant,
+// invisible. The shell renders the moment the URL is parsed on the client.
 export default function AcceptInvitePage() {
+  return (
+    <Suspense fallback={null}>
+      <AcceptInviteImpl />
+    </Suspense>
+  );
+}
+
+function AcceptInviteImpl() {
   const router = useRouter();
   const { tweaks } = useTheme();
   const { persistSession } = useAuth();
