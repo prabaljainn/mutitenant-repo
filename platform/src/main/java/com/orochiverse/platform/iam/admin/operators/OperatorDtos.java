@@ -48,4 +48,15 @@ public final class OperatorDtos {
                     u.status(), u.operatorRole(), u.lastLoginAt(), u.createdAt(), u.updatedAt());
         }
     }
+
+    /**
+     * One row in {@code GET /admin/api/operators/{id}/sessions}. {@code id}
+     * is the same derived session id used by the self-service surface
+     * (SHA-256 prefix of the opaque refresh token) — irreversible, safe
+     * to expose, queryable by the matching DELETE endpoint.
+     */
+    public record SessionResponse(
+            String id,
+            Instant issuedAt,
+            Instant expiresAt) {}
 }

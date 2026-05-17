@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.orochiverse.platform.common.security.auth.AuthenticatedUser;
 import com.orochiverse.platform.iam.admin.operators.OperatorDtos.InviteOperatorRequest;
 import com.orochiverse.platform.iam.admin.operators.OperatorDtos.OperatorResponse;
+import com.orochiverse.platform.iam.admin.operators.OperatorDtos.SessionResponse;
 import com.orochiverse.platform.iam.admin.operators.OperatorDtos.UpdateOperatorRequest;
 import com.orochiverse.platform.iam.users.UserStatus;
 
@@ -85,5 +86,26 @@ public class OperatorsAdminController {
     public OperatorResponse resendInvite(@PathVariable String id,
                                          @AuthenticationPrincipal AuthenticatedUser caller) {
         return service.resendInvite(id, caller.claims().userId());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Admin sessions — view / revoke another operator's refresh tokens.
+    // Self-service equivalents live on /api/auth/me/sessions.
+    // ─────────────────────────────────────────────────────────────────────
+
+    @GetMapping("/{id}/sessions")
+    @PreAuthorize("hasRole('OPERATOR_ADMIN')")
+    public List<SessionResponse> listSessions(@PathVariable String id) {
+        return service.listSessions(id);
+    }
+
+    /** Idempotent: 204 whether or not the session id was known. */
+    @DeleteMapping("/{id}/sessions/{sessionId}")
+    @PreAuthorize("hasRole('OPERATOR_ADMIN')")
+    public ResponseEntity<Void> revokeSession(@PathVariable String id,
+                                              @PathVariable String sessionId,
+                                              @AuthenticationPrincipal AuthenticatedUser caller) {
+        service.revokeSession(id, sessionId, caller.claims().userId());
+        return ResponseEntity.noContent().build();
     }
 }

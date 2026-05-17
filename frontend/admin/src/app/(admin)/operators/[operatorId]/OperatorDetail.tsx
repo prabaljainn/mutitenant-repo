@@ -19,7 +19,7 @@ import type { Operator, OperatorRole, OperatorStatus } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { isOperatorAdmin } from "@/lib/auth/jwt";
 import { useToast } from "@/lib/toast/ToastProvider";
-import { formatGB } from "@/lib/utils/date";
+import { formatGB, formatTime } from "@/lib/utils/date";
 
 const ROLES: OperatorRole[] = ["Admin", "Support"];
 
@@ -235,6 +235,7 @@ export function OperatorDetail({ operatorId }: { operatorId: string }) {
         </div>
 
         <AssignmentsCard operatorId={operatorId} canManage={canManage} />
+        {canManage && <SessionsCard operatorId={operatorId} />}
       </div>
     </>
   );
@@ -428,6 +429,100 @@ function AssignmentsCard({
         submitting={grant.isPending}
       />
     )}
+    </div>
+  );
+}
+
+/**
+ * Active refresh-token sessions for the operator being viewed. Admin-only
+ * — rendered by the parent when {@code canManage} is true. Use case: an
+ * operator reports a lost laptop and the admin wants to invalidate the
+ * stolen session without suspending the account.
+ *
+ * <p>No "this device" marker here — admin viewing someone else's
+ * sessions has no way to identify which is theirs. The self-service
+ * Sessions UI on /account does have the marker because the current
+ * refresh token is in sessionStorage.
+ */
+function SessionsCard({ operatorId }: { operatorId: string }) {
+  const qc = useQueryClient();
+  const { notify } = useToast();
+
+  const sessions = useQuery({
+    queryKey: ["operators", operatorId, "sessions"],
+    queryFn: () => operatorsApi.listSessions(operatorId),
+    retry: false,
+  });
+
+  const revoke = useMutation({
+    mutationFn: (sessionId: string) =>
+      operatorsApi.revokeSession(operatorId, sessionId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["operators", operatorId, "sessions"] });
+      notify("Session revoked", "info");
+    },
+    onError: (e: unknown) => {
+      notify(e instanceof Error ? e.message : "Revoke failed", "error");
+    },
+  });
+
+  const rows = sessions.data ?? [];
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <Card>
+        <CardHead
+          title="Active sessions"
+          sub="Outstanding refresh-token sessions. Revoking one signs that device out within the access-token TTL (15 min)."
+        />
+        <BackendStatus isLoading={sessions.isLoading} error={sessions.error}>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Session</th>
+                <th>Started</th>
+                <th>Expires</th>
+                <th style={{ width: 100 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={4}
+                    style={{ padding: 24, textAlign: "center", color: "var(--fg-3)" }}
+                  >
+                    No active sessions.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((s) => (
+                  <tr key={s.id}>
+                    <td>
+                      <span className="mono">{s.id}</span>
+                    </td>
+                    <td className="mono muted">
+                      {formatGB(s.issuedAt)} {formatTime(s.issuedAt)}
+                    </td>
+                    <td className="mono muted">
+                      {formatGB(s.expiresAt)} {formatTime(s.expiresAt)}
+                    </td>
+                    <td>
+                      <button
+                        className="btn btn-ghost btn-sm btn-danger"
+                        disabled={revoke.isPending}
+                        onClick={() => revoke.mutate(s.id)}
+                      >
+                        <Icon d={Icons.trash} size={12} /> Revoke
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </BackendStatus>
+      </Card>
     </div>
   );
 }

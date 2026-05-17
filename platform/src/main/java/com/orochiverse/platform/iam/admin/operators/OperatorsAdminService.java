@@ -23,6 +23,7 @@ import com.orochiverse.platform.iam.admin.common.AdminExceptions.NotFoundExcepti
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.UnprocessableException;
 import com.orochiverse.platform.iam.admin.operators.OperatorDtos.InviteOperatorRequest;
 import com.orochiverse.platform.iam.admin.operators.OperatorDtos.OperatorResponse;
+import com.orochiverse.platform.iam.admin.operators.OperatorDtos.SessionResponse;
 import com.orochiverse.platform.iam.admin.operators.OperatorDtos.UpdateOperatorRequest;
 import com.orochiverse.platform.iam.auth.RefreshTokenStore;
 import com.orochiverse.platform.iam.tokens.SingleUseToken;
@@ -277,5 +278,37 @@ public class OperatorsAdminService {
             throw new NotFoundException("user " + id + " is not an operator");
         }
         return u;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Sessions — admin viewing / revoking another operator's refresh
+    // tokens. Self-service equivalents live on /api/auth/me/sessions; this
+    // surface is for "operator X reported a lost laptop, kill their
+    // sessions without suspending the account" kind of flows.
+    // ─────────────────────────────────────────────────────────────────────
+
+    public List<SessionResponse> listSessions(String operatorId) {
+        loadOperatorOrThrow(operatorId);
+        return refreshTokens.listForUser(operatorId).stream()
+                .map(s -> new SessionResponse(s.id(), s.issuedAt(), s.expiresAt()))
+                .toList();
+    }
+
+    /**
+     * Idempotent: 204 whether or not the session id existed. Audits only
+     * on actual revocations so an admin sweeping a stale list doesn't
+     * spam the log.
+     */
+    public void revokeSession(String operatorId, String sessionId, String actorUserId) {
+        loadOperatorOrThrow(operatorId);
+        boolean revoked = refreshTokens.revokeByIdForUser(sessionId, operatorId);
+        if (revoked) {
+            audit.save(AuditEntry.of(AuditAction.TOKEN_REVOKED, actorUserId,
+                    Map.of("operatorId", operatorId,
+                            "sessionId", sessionId,
+                            "via", "admin")));
+            log.info("operator session revoked operator={} sessionId={} actor={}",
+                    operatorId, sessionId, actorUserId);
+        }
     }
 }

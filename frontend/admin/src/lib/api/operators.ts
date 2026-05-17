@@ -15,6 +15,7 @@ import type {
   Operator,
   OperatorRole,
   OperatorStatus,
+  Session,
 } from "./types";
 
 export const operatorsApi = {
@@ -77,6 +78,16 @@ export const operatorsApi = {
     );
     return toOperator(row);
   },
+
+  // Admin-side session management for another operator. Self-service
+  // equivalents live on /api/auth/me/sessions in lib/api/me.ts.
+  listSessions: async (operatorId: string): Promise<Session[]> =>
+    api<Session[]>(`/admin/api/operators/${operatorId}/sessions`),
+
+  revokeSession: (operatorId: string, sessionId: string) =>
+    api<void>(`/admin/api/operators/${operatorId}/sessions/${sessionId}`, {
+      method: "DELETE",
+    }),
 };
 
 export const assignmentsApi = {
