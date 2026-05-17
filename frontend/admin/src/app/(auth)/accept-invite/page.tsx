@@ -4,6 +4,12 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, type FormEvent } from "react";
 
+// useSearchParams() bails out of static prerender. Without this, `next
+// build` errors with "should be wrapped in a suspense boundary". The
+// page has no useful prerenderable shell anyway — the token from the
+// URL is the only thing that matters.
+export const dynamic = "force-dynamic";
+
 import { AuthRadar } from "@/components/auth/AuthRadar";
 import { acceptInvite } from "@/lib/api/auth";
 import { useAuth } from "@/lib/auth/AuthProvider";

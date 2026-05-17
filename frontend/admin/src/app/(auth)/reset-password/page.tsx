@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, type FormEvent } from "react";
 
+// Same reason as /accept-invite — useSearchParams() needs to bail out
+// of static prerender, and this page is useless without the token in
+// the URL anyway.
+export const dynamic = "force-dynamic";
+
 import { AuthRadar } from "@/components/auth/AuthRadar";
 import { resetPassword } from "@/lib/api/auth";
 import { useTheme } from "@/lib/theme/ThemeProvider";

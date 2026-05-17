@@ -4,6 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 
+// useSearchParams() bails out of static prerender. Without this, `next
+// build` errors with "should be wrapped in a suspense boundary". The
+// page is auth-gated and renders nothing meaningful without the JWT
+// anyway — no prerender shell worth keeping.
+export const dynamic = "force-dynamic";
+
 import { MetadataView } from "@/components/audit/MetadataView";
 import { Icon } from "@/components/icons/Icon";
 import { Icons } from "@/components/icons/icons";
