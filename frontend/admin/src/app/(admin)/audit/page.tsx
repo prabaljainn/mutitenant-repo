@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { MetadataView } from "@/components/audit/MetadataView";
@@ -69,12 +69,16 @@ function humanAction(action: string): string {
 
 export default function AuditPage() {
   const router = useRouter();
+  const search = useSearchParams();
   const { claims } = useAuth();
   const canRead = isOperatorAdmin(claims);
 
-  const [actorFilter, setActorFilter] = useState<string>("");
-  const [tenantFilter, setTenantFilter] = useState<string>("");
-  const [actionFilter, setActionFilter] = useState<string>("");
+  // Deep-link seed: read filter values from the URL once at mount so
+  // links like /audit?actorUserId=op-X pre-fill the filter. Subsequent
+  // filter changes stay in component state (we don't sync back to URL).
+  const [actorFilter, setActorFilter] = useState<string>(search?.get("actorUserId") ?? "");
+  const [tenantFilter, setTenantFilter] = useState<string>(search?.get("tenantId") ?? "");
+  const [actionFilter, setActionFilter] = useState<string>(search?.get("action") ?? "");
   // ISO date strings (YYYY-MM-DD) from <input type="date">. Converted to
   // full instants when serialized for the API call.
   const [sinceDate, setSinceDate] = useState<string>("");

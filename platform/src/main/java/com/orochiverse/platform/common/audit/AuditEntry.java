@@ -62,4 +62,19 @@ public record AuditEntry(
         return new AuditEntry(null, Instant.now(), actorUserId, action, null, null, null,
                 Map.copyOf(metadata), null, null);
     }
+
+    /**
+     * Tenant-aware variant. Populates the dedicated {@code tenantId} column
+     * (queryable by the {@code /admin/api/audit?tenantId=...} filter) in
+     * addition to whatever the caller put under {@code metadata.tenantId}.
+     *
+     * <p>Use this every time the action has a clear tenant context —
+     * settings edits, tenant CRUD, operator assignments, tenant switches,
+     * etc. Otherwise tenant-filter queries miss the row.
+     */
+    public static AuditEntry of(AuditAction action, String actorUserId,
+                                String tenantId, Map<String, Object> metadata) {
+        return new AuditEntry(null, Instant.now(), actorUserId, action, null, null,
+                tenantId, Map.copyOf(metadata), null, null);
+    }
 }

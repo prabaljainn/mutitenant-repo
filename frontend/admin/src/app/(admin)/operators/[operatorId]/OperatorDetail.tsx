@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useState } from "react";
 
 import { Icon } from "@/components/icons/Icon";
@@ -131,6 +132,16 @@ export function OperatorDetail({ operatorId }: { operatorId: string }) {
               <div className="page-sub">{op.email}</div>
             </div>
           </div>
+          {/* Audit is ADMIN-only; SUPPORT would just hit a 403 redirect. */}
+          {canManage && (
+            <Link
+              href={`/audit?actorUserId=${encodeURIComponent(op.id)}`}
+              className="btn"
+              title="See every audit row this operator generated"
+            >
+              <Icon d={Icons.console} size={14} /> View activity
+            </Link>
+          )}
         </div>
 
         <div

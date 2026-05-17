@@ -228,7 +228,7 @@ public class AuthService {
 
         var access = issueAccessTokenForUser(user, tenantId);
 
-        audit.save(AuditEntry.of(AuditAction.TENANT_SWITCHED, operatorUserId,
+        audit.save(AuditEntry.of(AuditAction.TENANT_SWITCHED, operatorUserId, tenantId,
                 java.util.Map.of("tenantId", tenantId)));
 
         return SwitchTenantResponse.bearer(access, accessTokenTtlSeconds);

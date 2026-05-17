@@ -128,7 +128,7 @@ public class TenantSettingsService {
         // secrets). For a fresh row, that's every key; for an update,
         // diff against existing.
         Set<String> changedKeys = diffKeys(existing.map(TenantSetting::values), merged, handler.secretKeys());
-        audit.save(AuditEntry.of(AuditAction.TENANT_SETTING_UPDATED, actorUserId,
+        audit.save(AuditEntry.of(AuditAction.TENANT_SETTING_UPDATED, actorUserId, tenantId,
                 Map.of("tenantId", tenantId, "kind", kind.name(), "changed", changedKeys)));
         log.info("tenant setting upserted tenant={} kind={} changed={} actor={}",
                 tenantId, kind, changedKeys, actorUserId);
@@ -146,7 +146,7 @@ public class TenantSettingsService {
                 .orElseThrow(() -> new NotFoundException(
                         "settings " + kind + " for tenant " + tenantId + " not found"));
         settings.delete(existing);
-        audit.save(AuditEntry.of(AuditAction.TENANT_SETTING_DELETED, actorUserId,
+        audit.save(AuditEntry.of(AuditAction.TENANT_SETTING_DELETED, actorUserId, tenantId,
                 Map.of("tenantId", tenantId, "kind", kind.name())));
         log.info("tenant setting deleted tenant={} kind={} actor={}", tenantId, kind, actorUserId);
     }
@@ -197,7 +197,7 @@ public class TenantSettingsService {
         // for a test — saving requires upsert.
         existing.ifPresent(s -> settings.save(s.withTestResult(result.ok(), result.error())));
 
-        audit.save(AuditEntry.of(AuditAction.TENANT_SETTING_TESTED, actorUserId,
+        audit.save(AuditEntry.of(AuditAction.TENANT_SETTING_TESTED, actorUserId, tenantId,
                 Map.of("tenantId", tenantId, "kind", kind.name(),
                         "ok", result.ok(),
                         "latencyMs", result.latencyMs())));

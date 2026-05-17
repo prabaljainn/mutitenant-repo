@@ -154,7 +154,7 @@ public class TenantUsersService {
                     id, req.email(), e.getMessage());
         }
 
-        audit.save(auditEntry(AuditAction.TENANT_USER_INVITED, actorUserId, tenantId,
+        audit.save(AuditEntry.of(AuditAction.TENANT_USER_INVITED, actorUserId, tenantId,
                 Map.of("tenantUserId", id, "email", req.email(), "role", req.role().name())));
         metrics.inviteTenantUser();
         log.info("tenant user invited tenant={} id={} email={} role={} actor={}",
@@ -210,7 +210,7 @@ public class TenantUsersService {
                     id, existing.email(), e.getMessage());
         }
 
-        audit.save(auditEntry(AuditAction.TENANT_USER_INVITE_RESENT, actorUserId, tenantId,
+        audit.save(AuditEntry.of(AuditAction.TENANT_USER_INVITE_RESENT, actorUserId, tenantId,
                 Map.of("tenantUserId", id, "email", existing.email())));
         log.info("tenant user invite resent tenant={} id={} actor={}", tenantId, id, actorUserId);
         return TenantUserResponse.from(existing);
@@ -286,7 +286,7 @@ public class TenantUsersService {
         }
 
         if (roleChanged) {
-            audit.save(auditEntry(AuditAction.TENANT_USER_ROLE_CHANGED, actorUserId, tenantId,
+            audit.save(AuditEntry.of(AuditAction.TENANT_USER_ROLE_CHANGED, actorUserId, tenantId,
                     Map.of("tenantUserId", id,
                             "from", existing.tenantRole().name(),
                             "to", req.role().name())));
@@ -295,7 +295,7 @@ public class TenantUsersService {
                 && req.status() == UserStatus.SUSPENDED) {
             refreshTokens.revokeAllForUser(id);
             singleUseTokens.revokeAllForUser(id);
-            audit.save(auditEntry(AuditAction.TENANT_USER_SUSPENDED, actorUserId, tenantId,
+            audit.save(AuditEntry.of(AuditAction.TENANT_USER_SUSPENDED, actorUserId, tenantId,
                     Map.of("tenantUserId", id)));
         }
         return TenantUserResponse.from(saved);
@@ -333,7 +333,7 @@ public class TenantUsersService {
         refreshTokens.revokeAllForUser(id);
         singleUseTokens.revokeAllForUser(id);
 
-        audit.save(auditEntry(AuditAction.TENANT_USER_DELETED, actorUserId, tenantId,
+        audit.save(AuditEntry.of(AuditAction.TENANT_USER_DELETED, actorUserId, tenantId,
                 Map.of("tenantUserId", id, "email", originalEmail)));
         log.info("tenant user deleted tenant={} id={} actor={}", tenantId, id, actorUserId);
     }
@@ -358,9 +358,4 @@ public class TenantUsersService {
                 .orElse(null);
     }
 
-    private static AuditEntry auditEntry(AuditAction action, String actorUserId,
-                                         String tenantId, Map<String, Object> metadata) {
-        return new AuditEntry(null, Instant.now(), actorUserId, action,
-                null, null, tenantId, Map.copyOf(metadata), null, null);
-    }
 }

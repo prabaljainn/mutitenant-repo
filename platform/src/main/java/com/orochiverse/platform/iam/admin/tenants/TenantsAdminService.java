@@ -107,9 +107,9 @@ public class TenantsAdminService {
 
         provisioner.provision(saved.id());
 
-        audit.save(AuditEntry.of(AuditAction.TENANT_CREATED, actorUserId,
+        audit.save(AuditEntry.of(AuditAction.TENANT_CREATED, actorUserId, saved.id(),
                 Map.of("tenantId", saved.id(), "name", saved.name())));
-        audit.save(AuditEntry.of(AuditAction.TENANT_DB_PROVISIONED, actorUserId,
+        audit.save(AuditEntry.of(AuditAction.TENANT_DB_PROVISIONED, actorUserId, saved.id(),
                 Map.of("tenantId", saved.id())));
         log.info("tenant created id={} actor={}", saved.id(), actorUserId);
 
@@ -155,7 +155,7 @@ public class TenantsAdminService {
         var changes = new LinkedHashMap<String, Object>();
         if (req.name() != null) changes.put("name", req.name());
         if (req.settings() != null) changes.put("settings", "<changed>");
-        audit.save(AuditEntry.of(AuditAction.TENANT_UPDATED, actorUserId,
+        audit.save(AuditEntry.of(AuditAction.TENANT_UPDATED, actorUserId, id,
                 Map.of("tenantId", id, "changes", changes)));
 
         return TenantResponse.from(saved);
@@ -208,7 +208,7 @@ public class TenantsAdminService {
         meta.put("tenantId", id);
         if (currentOwnerId != null) meta.put("from", currentOwnerId);
         meta.put("to", newOwnerUserId);
-        audit.save(AuditEntry.of(AuditAction.TENANT_OWNERSHIP_TRANSFERRED, actorUserId, meta));
+        audit.save(AuditEntry.of(AuditAction.TENANT_OWNERSHIP_TRANSFERRED, actorUserId, id, meta));
         log.info("tenant ownership transferred tenant={} from={} to={} actor={}",
                 id, currentOwnerId, newOwnerUserId, actorUserId);
 
@@ -238,9 +238,9 @@ public class TenantsAdminService {
             }
         }
 
-        audit.save(AuditEntry.of(AuditAction.TENANT_ARCHIVED, actorUserId,
+        audit.save(AuditEntry.of(AuditAction.TENANT_ARCHIVED, actorUserId, id,
                 Map.of("tenantId", id)));
-        audit.save(AuditEntry.of(AuditAction.TENANT_DB_DEPROVISIONED, actorUserId,
+        audit.save(AuditEntry.of(AuditAction.TENANT_DB_DEPROVISIONED, actorUserId, id,
                 Map.of("tenantId", id)));
         log.info("tenant soft-deleted + db dropped id={} actor={}", id, actorUserId);
     }
