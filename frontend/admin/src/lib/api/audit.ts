@@ -49,6 +49,7 @@ export const AUDIT_ACTIONS: readonly { group: string; values: string[] }[] = [
       "PASSWORD_RESET_REQUESTED",
       "PASSWORD_RESET_COMPLETED",
       "PASSWORD_CHANGED",
+      "PROFILE_UPDATED",
       "TENANT_SWITCHED",
       "TOKEN_REVOKED",
     ],

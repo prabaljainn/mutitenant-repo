@@ -5,6 +5,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -84,5 +86,37 @@ public class InMemoryRefreshTokenStore implements RefreshTokenStore {
     @Override
     public void revokeAllForUser(String userId) {
         tokens.values().removeIf(t -> t.userId().equals(userId));
+    }
+
+    @Override
+    public List<SessionInfo> listForUser(String userId) {
+        Instant now = clock.instant();
+        return tokens.values().stream()
+                .filter(t -> t.userId().equals(userId))
+                .filter(t -> !t.isExpired(now))
+                .sorted(Comparator.comparing(RefreshToken::issuedAt).reversed())
+                .map(t -> new SessionInfo(
+                        RefreshTokenStore.deriveSessionId(t.token()),
+                        t.issuedAt(),
+                        t.expiresAt()))
+                .toList();
+    }
+
+    @Override
+    public boolean revokeByIdForUser(String id, String userId) {
+        if (id == null || id.isBlank()) {
+            return false;
+        }
+        // Linear scan is fine — a single user has at most a handful of
+        // outstanding sessions. A Redis-backed impl will key by id directly.
+        for (var entry : tokens.entrySet()) {
+            RefreshToken rt = entry.getValue();
+            if (!rt.userId().equals(userId)) continue;
+            if (RefreshTokenStore.deriveSessionId(rt.token()).equals(id)) {
+                tokens.remove(entry.getKey());
+                return true;
+            }
+        }
+        return false;
     }
 }

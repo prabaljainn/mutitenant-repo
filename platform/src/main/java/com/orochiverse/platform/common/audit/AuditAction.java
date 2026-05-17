@@ -40,6 +40,13 @@ public enum AuditAction {
     TENANT_SETTING_DELETED,
     TENANT_SETTING_TESTED,
 
+    // ─── Self-service ──────────────────────────────────────────────────
+    // Both apply to operators AND tenant users. PASSWORD_CHANGED and
+    // TOKEN_REVOKED above are reused for self-service password change
+    // and session revoke; metadata.via="self_service" distinguishes them
+    // from the admin-driven equivalents.
+    PROFILE_UPDATED,
+
     TENANT_SWITCHED,
     TOKEN_REVOKED
 }

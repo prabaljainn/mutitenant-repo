@@ -11,6 +11,8 @@ import type {
   Operator,
   OperatorRole,
   Tenant,
+  UserKind,
+  UserSearchResult,
 } from "./types";
 import { initials } from "@/lib/utils/initials";
 
@@ -149,6 +151,36 @@ export function toAssignment(s: SpringAssignment): Assignment {
     tenantId: s.tenantId,
     assignedBy: s.assignedBy,
     assignedAt: s.assignedAt,
+  };
+}
+
+// ─── User search ─────────────────────────────────────────────────────────────
+
+export type SpringUserSearchResult = {
+  userId: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  kind: UserKind;
+  tenantId: string | null;
+  role: string | null;
+  status: "INVITED" | "ACTIVE" | "SUSPENDED" | "DELETED";
+  lastLoginAt: string | null;
+};
+
+export function toUserSearchResult(s: SpringUserSearchResult): UserSearchResult {
+  const name = [s.firstName, s.lastName].filter(Boolean).join(" ").trim() || s.email;
+  return {
+    userId: s.userId,
+    email: s.email,
+    firstName: s.firstName,
+    lastName: s.lastName,
+    name,
+    kind: s.kind,
+    tenantId: s.tenantId,
+    role: s.role,
+    status: s.status,
+    lastLoginAt: s.lastLoginAt,
   };
 }
 

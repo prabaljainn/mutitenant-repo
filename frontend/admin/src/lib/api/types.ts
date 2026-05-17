@@ -87,6 +87,41 @@ export type AuditRow = {
   metadata: Record<string, unknown>;
 };
 
+export type UserKind = "OPERATOR" | "TENANT_USER";
+
+/** One row from {@code /admin/api/users/search}. {@code tenantId} is null
+ *  for operators; {@code role} carries the operator-role string for
+ *  OPERATOR rows and the tenant-role string for TENANT_USER rows. */
+export type UserSearchResult = {
+  userId: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  name: string;
+  kind: UserKind;
+  tenantId: string | null;
+  role: string | null;
+  status: "INVITED" | "ACTIVE" | "SUSPENDED" | "DELETED";
+  lastLoginAt: string | null;
+};
+
+/** One active refresh-token session belonging to the current user.
+ *  {@code id} is a stable, irreversible 16-hex SHA-256 prefix so the
+ *  raw token never leaves the server. */
+export type Session = {
+  id: string;
+  issuedAt: string;
+  expiresAt: string;
+};
+
+/** Response from {@code GET /api/auth/me/profile} and PATCH equivalent. */
+export type SelfProfile = {
+  userId: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+};
+
 export type LoginResponse = {
   accessToken: string;
   refreshToken: string;

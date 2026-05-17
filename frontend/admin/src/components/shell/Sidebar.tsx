@@ -48,6 +48,15 @@ export function Sidebar({
       count: operatorCount,
       match: (p) => p.startsWith("/operators"),
     },
+    // Cross-tenant user lookup. Visible to both ADMIN and SUPPORT; the
+    // backend scopes SUPPORT results to assigned tenants + tenant users
+    // only.
+    {
+      href: "/users",
+      label: "User search",
+      icon: Icons.users,
+      match: (p) => p.startsWith("/users"),
+    },
     // Audit is admin-only on the backend; hide it for SUPPORT entirely
     // rather than render a link that 403s.
     ...(isOperatorAdmin(claims)
@@ -112,9 +121,14 @@ export function Sidebar({
         </div>
         {menuOpen && (
           <div className="sb-switcher" style={{ bottom: "calc(100% + 6px)", top: "auto" }}>
-            <div className="sb-switcher-row" onClick={() => setMenuOpen(false)}>
+            <Link
+              href="/account"
+              className="sb-switcher-row"
+              onClick={() => setMenuOpen(false)}
+              style={{ textDecoration: "none", color: "inherit" }}
+            >
               <Icon d={Icons.settings} size={14} /> <span>Account settings</span>
-            </div>
+            </Link>
             <div
               className="sb-switcher-row"
               onClick={() => {

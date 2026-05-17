@@ -1,5 +1,10 @@
 package com.orochiverse.platform.iam.auth;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -24,6 +29,12 @@ import java.util.Optional;
  *
  * <p>Refresh tokens are NOT JWTs — they're opaque random strings. The store
  * is the only place that knows the user binding.
+ *
+ * <h2>Self-service "active sessions"</h2>
+ * The {@link #listForUser(String)} and {@link #revokeByIdForUser(String, String)}
+ * pair powers the operator self-service Sessions UI. Sessions are identified
+ * by a stable, irreversible derived id ({@link #deriveSessionId(String)}) so
+ * the raw refresh token never leaves the server.
  */
 public interface RefreshTokenStore {
 
@@ -43,4 +54,47 @@ public interface RefreshTokenStore {
 
     /** Used on password change / account deactivation. */
     void revokeAllForUser(String userId);
+
+    /**
+     * Snapshot of one outstanding refresh token, safe to expose. The
+     * {@code id} is derived from {@link #deriveSessionId(String)} so the
+     * raw token never appears in the response.
+     */
+    record SessionInfo(String id, Instant issuedAt, Instant expiresAt) {}
+
+    /**
+     * Lists the live (non-expired) sessions belonging to {@code userId},
+     * sorted newest-first. Used by {@code GET /api/auth/me/sessions}.
+     */
+    List<SessionInfo> listForUser(String userId);
+
+    /**
+     * Revoke a single session by its derived id. Returns {@code true} if a
+     * matching session was found and removed; {@code false} otherwise.
+     * Constrained to {@code userId} so an attacker who somehow learns
+     * another user's session id can't revoke them — and so the obvious
+     * forge-attempts (lifting an id from a log) are no-ops.
+     */
+    boolean revokeByIdForUser(String id, String userId);
+
+    /**
+     * Derive a 16-char hex session id from the opaque refresh token. The
+     * id is the first 64 bits of SHA-256 — irreversible, collision-safe
+     * for the scale of one user's outstanding sessions (dozens), and
+     * deterministic so the client can recompute its own current session
+     * id to highlight it in the UI.
+     */
+    static String deriveSessionId(String token) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest(token.getBytes(StandardCharsets.UTF_8));
+            var sb = new StringBuilder(16);
+            for (int i = 0; i < 8; i++) {
+                sb.append(String.format("%02x", hash[i] & 0xff));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 missing from JRE", e);
+        }
+    }
 }
