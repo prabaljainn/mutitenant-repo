@@ -15,6 +15,14 @@ RUN npm ci --no-audit --no-fund
 
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# next.config.ts's rewrites() reads PLATFORM_API_BASE at `next build` time
+# and bakes the result into the routes manifest (this is the documented
+# behaviour for `output: "standalone"` mode). Setting it only at runtime
+# is too late — the manifest is fixed by the time the server starts.
+# Default to the docker-internal hostname; override with a build-arg for
+# alternate deployments.
+ARG PLATFORM_API_BASE=http://platform:8080
+ENV PLATFORM_API_BASE=$PLATFORM_API_BASE
 RUN npm run build
 
 ###############################################################################
