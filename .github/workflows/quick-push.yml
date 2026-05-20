@@ -4,33 +4,57 @@ name: quick-push
 # infrastructure-adjacent code (compose, traefik, JWT bootstrap, etc.)
 # when waiting on Surefire just to redeploy is the bottleneck.
 #
-# Trigger: manual only (workflow_dispatch). Pick the ref to build from
-# the Actions UI; defaults to the workflow's default branch.
+# Trigger: manual only (workflow_dispatch). In the Actions UI:
+#   - "Use workflow from"  selects the branch the workflow file is
+#                          loaded from. By default it's also the ref
+#                          that gets checked out.
+#   - "ref" input          override that — paste any branch or commit
+#                          SHA to build from a different point.
+#   - "target" input       choose which image(s) to build:
+#                            • both             (default)
+#                            • platform         (Spring service)
+#                            • admin-frontend   (Next.js console)
 #
-# Tags published:
+# Tags published, per image:
 #   - quick                — moving pointer to the latest quick build
 #   - quick-sha-<short>    — immutable per-commit handle
 #
 # Does NOT publish `:latest`, `:main`, `:sha-*`, or any semver tag —
-# those remain owned by release.yml and the gated CI in build.yml. On
-# the VPS, flip to a quick image for an ad-hoc deploy with:
+# those remain owned by release.yml / frontend-release.yml and the
+# gated CI in build.yml / admin-frontend-ci.yml. On the VPS, flip an
+# image to the quick tag for an ad-hoc deploy with:
 #
 #   PLATFORM_IMAGE_TAG=quick docker compose pull platform
 #   PLATFORM_IMAGE_TAG=quick docker compose up -d platform
+#   ADMIN_FRONTEND_IMAGE_TAG=quick docker compose pull admin-frontend
+#   ADMIN_FRONTEND_IMAGE_TAG=quick docker compose up -d admin-frontend
 #
 # Switch back to a tested build by unsetting the override (or setting
-# PLATFORM_IMAGE_TAG=latest in .env).
+# *_IMAGE_TAG=latest in .env).
 
 on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Branch or commit SHA to build (blank = workflow ref)'
+        description: 'Branch or commit SHA to build (blank = the "Use workflow from" branch)'
         required: false
         default: ''
+      target:
+        description: 'Which image(s) to build'
+        type: choice
+        required: true
+        default: both
+        options:
+          - both
+          - platform
+          - admin-frontend
 
 concurrency:
-  group: quick-push-${{ github.ref }}
+  # Per-target group so a "platform-only" run doesn't cancel an
+  # in-progress "admin-frontend" build and vice versa. github.ref is
+  # the workflow ref; ref input is the build ref — both matter for
+  # de-duplication.
+  group: quick-push-${{ github.ref }}-${{ inputs.target }}-${{ inputs.ref }}
   cancel-in-progress: true   # latest click wins; older quick builds aren't worth finishing
 
 permissions:
@@ -42,8 +66,12 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  image:
-    name: build + push (skip tests)
+  # ───────────────────────────────────────────────────────────────
+  # Platform (Spring) image
+  # ───────────────────────────────────────────────────────────────
+  platform:
+    name: platform — build + push (skip tests)
+    if: ${{ inputs.target == 'platform' || inputs.target == 'both' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -95,13 +123,15 @@ jobs:
           # release path still test-gates inside the image.
           build-args: |
             SKIP_TESTS=true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Scoped buildx cache so platform and admin-frontend don't
+          # trample each other's layers in GHA cache storage.
+          cache-from: type=gha,scope=platform
+          cache-to: type=gha,scope=platform,mode=max
 
       - name: publish image summary
         run: |
           {
-            echo "### Quick-push image (tests skipped)"
+            echo "### Quick-push platform image (tests skipped)"
             echo ""
             echo "⚠️  This image was built without running the test suite. Do not promote it to long-lived production traffic without separate verification."
             echo ""
@@ -112,5 +142,80 @@ jobs:
             echo '```'
             echo "PLATFORM_IMAGE_TAG=quick docker compose pull platform"
             echo "PLATFORM_IMAGE_TAG=quick docker compose up -d platform"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ───────────────────────────────────────────────────────────────
+  # Admin frontend (Next.js) image
+  # ───────────────────────────────────────────────────────────────
+  admin-frontend:
+    name: admin-frontend — build + push
+    if: ${{ inputs.target == 'admin-frontend' || inputs.target == 'both' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: lowercase image name
+        id: img
+        run: echo "name=${IMAGE_NAME,,}/admin-frontend" >> "$GITHUB_OUTPUT"
+
+      - name: set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: compute tags + labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.img.outputs.name }}
+          tags: |
+            type=raw,value=quick
+            type=sha,prefix=quick-sha-,format=short
+          labels: |
+            org.opencontainers.image.title=orochiverse-admin-frontend
+            org.opencontainers.image.description=Quick admin-frontend image — NOT gated by CI tests
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=Proprietary
+
+      - name: build + push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./frontend/admin
+          file: ./frontend/admin/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Frontend Dockerfile defaults PLATFORM_API_BASE to
+          # http://platform:8080 — same as frontend-release.yml. Override
+          # here if/when this workflow needs a different bake target.
+          cache-from: type=gha,scope=admin-frontend
+          cache-to: type=gha,scope=admin-frontend,mode=max
+
+      - name: publish image summary
+        run: |
+          {
+            echo "### Quick-push admin-frontend image"
+            echo ""
+            echo "⚠️  This image was built without running the CI test suite. Don't promote it to long-lived production traffic without separate verification."
+            echo ""
+            echo "**Tags:**"
+            echo "${{ steps.meta.outputs.tags }}" | sed 's/^/- `/' | sed 's/$/`/'
+            echo ""
+            echo "**Deploy on the VPS:**"
+            echo '```'
+            echo "ADMIN_FRONTEND_IMAGE_TAG=quick docker compose pull admin-frontend"
+            echo "ADMIN_FRONTEND_IMAGE_TAG=quick docker compose up -d admin-frontend"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
