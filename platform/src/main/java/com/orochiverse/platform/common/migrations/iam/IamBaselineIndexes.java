@@ -24,7 +24,8 @@ import io.mongock.api.annotations.RollbackExecution;
  *   <li><b>users</b>: unique on {@code email}; supporting indexes on
  *       {@code kind}, {@code status}, and {@code (tenantId, status)}.</li>
  *   <li><b>tenants</b>: unique already implicit on {@code _id} (slug);
- *       supporting index on {@code status}.</li>
+ *       supporting index on {@code deletedAt} to make the
+ *       "live tenants only" filter cheap.</li>
  *   <li><b>operator_assignments</b>: unique compound on
  *       {@code (operatorUserId, tenantId)}; supporting indexes on each
  *       side for fan-out queries.</li>
@@ -59,9 +60,10 @@ public class IamBaselineIndexes {
                         .named("idx_users_tenant_status"));
 
         // ── tenants ───────────────────────────────────────────────────────
-        // _id is already unique (it IS the slug). Just status for filtering.
+        // _id is already unique (it IS the slug). Index on deletedAt so the
+        // "live tenants only" path (every read) doesn't full-scan.
         template.indexOps("tenants").createIndex(
-                new Index().on("status", Sort.Direction.ASC).named("idx_tenants_status"));
+                new Index().on("deletedAt", Sort.Direction.ASC).named("idx_tenants_deletedAt"));
 
         // ── operator_assignments ──────────────────────────────────────────
         template.indexOps("operator_assignments").createIndex(

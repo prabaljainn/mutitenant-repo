@@ -75,7 +75,7 @@ class OperatorAssignmentsAdminControllerIT {
         adminToken = JwtTestSupport.token(issuer, admin);
 
         tenantId = "p17b" + suffix;
-        tenants.save(Tenant.newTrial(tenantId, "Acme " + suffix, "STARTER", adminId));
+        tenants.save(Tenant.create(tenantId, "Acme " + suffix, adminId));
     }
 
     @AfterEach

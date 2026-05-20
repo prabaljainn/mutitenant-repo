@@ -21,6 +21,7 @@ public enum AuditAction {
     TENANT_DB_DEPROVISIONED,
 
     OPERATOR_INVITED,
+    OPERATOR_INVITE_RESENT,
     OPERATOR_ROLE_CHANGED,
     OPERATOR_SUSPENDED,
     OPERATOR_DELETED,
@@ -28,13 +29,23 @@ public enum AuditAction {
     OPERATOR_ASSIGNMENT_REVOKED,
 
     TENANT_USER_INVITED,
+    TENANT_USER_INVITE_RESENT,
     TENANT_USER_ROLE_CHANGED,
     TENANT_USER_SUSPENDED,
     TENANT_USER_DELETED,
 
+    TENANT_OWNERSHIP_TRANSFERRED,
+
     TENANT_SETTING_UPDATED,
     TENANT_SETTING_DELETED,
     TENANT_SETTING_TESTED,
+
+    // ─── Self-service ──────────────────────────────────────────────────
+    // Both apply to operators AND tenant users. PASSWORD_CHANGED and
+    // TOKEN_REVOKED above are reused for self-service password change
+    // and session revoke; metadata.via="self_service" distinguishes them
+    // from the admin-driven equivalents.
+    PROFILE_UPDATED,
 
     TENANT_SWITCHED,
     TOKEN_REVOKED

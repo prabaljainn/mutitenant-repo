@@ -8,26 +8,38 @@ import org.junit.jupiter.api.Test;
 class TenantTest {
 
     @Test
-    void newTrial_creates_a_valid_tenant() {
-        var t = Tenant.newTrial("acme", "Acme Corp", "STARTER", "operator-1");
+    void create_factory_yields_a_live_ownerless_tenant() {
+        var t = Tenant.create("acme", "Acme Corp", "operator-1");
         assertThat(t.id()).isEqualTo("acme");
         assertThat(t.name()).isEqualTo("Acme Corp");
-        assertThat(t.status()).isEqualTo(TenantStatus.TRIAL);
-        assertThat(t.plan()).isEqualTo("STARTER");
         assertThat(t.createdBy()).isEqualTo("operator-1");
-        assertThat(t.createdAt()).isEqualTo(t.updatedAt());
+        assertThat(t.ownerUserId()).isNull();
+        assertThat(t.deletedAt()).isNull();
         assertThat(t.settings()).isEmpty();
+        assertThat(t.createdAt()).isEqualTo(t.updatedAt());
+    }
+
+    @Test
+    void withOwner_returns_a_copy_with_owner_set() {
+        var t = Tenant.create("acme", "Acme", "op").withOwner("tuser-1");
+        assertThat(t.ownerUserId()).isEqualTo("tuser-1");
+    }
+
+    @Test
+    void withDeleted_stamps_deletedAt() {
+        var t = Tenant.create("acme", "Acme", "op").withDeleted();
+        assertThat(t.deletedAt()).isNotNull();
     }
 
     @Test
     void invalid_id_is_rejected() {
-        assertThatThrownBy(() -> Tenant.newTrial("Bad Id", "Name", "P", "u"))
+        assertThatThrownBy(() -> Tenant.create("Bad Id", "Name", "u"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void blank_name_is_rejected() {
-        assertThatThrownBy(() -> Tenant.newTrial("acme", "  ", "P", "u"))
+        assertThatThrownBy(() -> Tenant.create("acme", "  ", "u"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("name");
     }

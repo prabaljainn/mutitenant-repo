@@ -34,7 +34,7 @@ class EmailRenderingTest {
         var ctx = new Context();
         ctx.setVariable("firstName", "Bob");
         ctx.setVariable("tenantName", "Acme Corp");
-        ctx.setVariable("role", "EDITOR");
+        ctx.setVariable("role", "MEMBER");
         ctx.setVariable("acceptUrl", "http://localhost:8080/accept-invite?token=xyz");
         ctx.setVariable("expiresAt", "2026-05-18T12:00:00Z");
 
@@ -43,7 +43,7 @@ class EmailRenderingTest {
         assertThat(body)
                 .contains("Hi Bob,")
                 .contains("Acme Corp")
-                .contains("EDITOR")
+                .contains("MEMBER")
                 .contains("token=xyz");
     }
 

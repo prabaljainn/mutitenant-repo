@@ -20,6 +20,8 @@ import org.springframework.test.context.DynamicPropertySource;
 
 import com.orochiverse.platform.common.security.jwt.AccessTokenIssuer;
 import com.orochiverse.platform.common.security.passwords.PasswordHashing;
+import com.orochiverse.platform.common.security.principals.OperatorRole;
+import com.orochiverse.platform.iam.auth.RefreshTokenStore;
 import com.orochiverse.platform.iam.users.UserRepository;
 import com.orochiverse.platform.iam.users.UserStatus;
 import com.orochiverse.platform.testsupport.IT;
@@ -41,11 +43,14 @@ class OperatorsAdminControllerIT {
     @Autowired UserRepository users;
     @Autowired PasswordHashing passwords;
     @Autowired AccessTokenIssuer issuer;
+    @Autowired RefreshTokenStore refreshTokens;
 
     private String suffix;
     private String adminId;
     private String adminToken;
     private String createdInviteId;
+    private String otherOperatorId;
+    private String supportToken;
 
     @BeforeEach
     void setUp() {
@@ -57,6 +62,11 @@ class OperatorsAdminControllerIT {
 
     @AfterEach
     void cleanup() {
+        if (otherOperatorId != null) {
+            refreshTokens.revokeAllForUser(otherOperatorId);
+            users.deleteById(otherOperatorId);
+        }
+        refreshTokens.revokeAllForUser(adminId);
         users.deleteById(adminId);
         if (createdInviteId != null) users.deleteById(createdInviteId);
     }
@@ -199,4 +209,132 @@ class OperatorsAdminControllerIT {
         assertThat(after.status()).isEqualTo(UserStatus.DELETED);
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Resend invite
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resend_invite_succeeds_for_invited_operator() {
+        var invite = IT.exchange(port, "/admin/api/operators", HttpMethod.POST, adminToken,
+                Map.of("email", "resend-" + suffix + "@orochi.example",
+                        "firstName", "Re", "lastName", "Send", "role", "OPERATOR_SUPPORT"),
+                Map.class);
+        String id = (String) ((Map<String, Object>) invite.getBody()).get("id");
+        createdInviteId = id;
+
+        var resp = IT.exchange(port, "/admin/api/operators/" + id + "/resend-invite",
+                HttpMethod.POST, adminToken, null, Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).containsEntry("status", "INVITED");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resend_invite_returns_422_for_non_invited_operator() {
+        // adminId is ACTIVE — the bootstrap operator in this test class.
+        var resp = IT.exchange(port, "/admin/api/operators/" + adminId + "/resend-invite",
+                HttpMethod.POST, adminToken, null, Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resend_invite_returns_404_for_unknown_operator() {
+        var resp = IT.exchange(port, "/admin/api/operators/operator-nosuch/resend-invite",
+                HttpMethod.POST, adminToken, null, Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Admin sessions — list + revoke another operator's refresh tokens
+    // ─────────────────────────────────────────────────────────────────────
+
+    private void seedAnotherOperatorWithSessions(int sessionCount) {
+        var other = IamFixtures.operator(suffix)
+                .id("opo-" + suffix)
+                .email("opo-" + suffix + "@orochi.example")
+                .role(OperatorRole.OPERATOR_SUPPORT)
+                .save(users, passwords);
+        otherOperatorId = other.id();
+        for (int i = 0; i < sessionCount; i++) {
+            refreshTokens.issue(otherOperatorId);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void admin_can_list_another_operators_sessions_newest_first() {
+        seedAnotherOperatorWithSessions(2);
+
+        var resp = IT.exchange(port, "/admin/api/operators/" + otherOperatorId + "/sessions",
+                HttpMethod.GET, adminToken, null, List.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        var rows = (List<Map<String, Object>>) resp.getBody();
+        assertThat(rows).hasSize(2);
+        // No raw token should ever appear in the response — only the
+        // derived session id.
+        assertThat(rows).noneMatch(r -> r.containsKey("token"));
+        assertThat(rows.get(0)).containsKey("id");
+        assertThat(rows.get(0)).containsKey("issuedAt");
+        assertThat(rows.get(0)).containsKey("expiresAt");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void admin_can_revoke_a_specific_session_by_id() {
+        seedAnotherOperatorWithSessions(0);
+        var rt = refreshTokens.issue(otherOperatorId);
+        String sid = RefreshTokenStore.deriveSessionId(rt.token());
+
+        var del = IT.exchange(port,
+                "/admin/api/operators/" + otherOperatorId + "/sessions/" + sid,
+                HttpMethod.DELETE, adminToken, null, Void.class);
+
+        assertThat(del.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        // The opaque token can no longer be consumed → really gone.
+        assertThat(refreshTokens.consume(rt.token())).isEmpty();
+    }
+
+    @Test
+    void admin_revoke_unknown_session_id_is_idempotent_204() {
+        seedAnotherOperatorWithSessions(0);
+
+        var resp = IT.exchange(port,
+                "/admin/api/operators/" + otherOperatorId + "/sessions/0123456789abcdef",
+                HttpMethod.DELETE, adminToken, null, Void.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void list_sessions_for_unknown_operator_returns_404() {
+        var resp = IT.exchange(port, "/admin/api/operators/operator-nosuch/sessions",
+                HttpMethod.GET, adminToken, null, Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void support_role_cannot_list_sessions() {
+        seedAnotherOperatorWithSessions(1);
+        var support = IamFixtures.operator(suffix)
+                .id("sup-" + suffix)
+                .email("sup-" + suffix + "@orochi.example")
+                .role(OperatorRole.OPERATOR_SUPPORT)
+                .save(users, passwords);
+        supportToken = JwtTestSupport.token(issuer, support);
+
+        try {
+            var resp = IT.exchange(port,
+                    "/admin/api/operators/" + otherOperatorId + "/sessions",
+                    HttpMethod.GET, supportToken, null, Map.class);
+            assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        } finally {
+            users.deleteById(support.id());
+        }
+    }
 }

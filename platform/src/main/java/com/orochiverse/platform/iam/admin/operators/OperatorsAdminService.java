@@ -23,6 +23,7 @@ import com.orochiverse.platform.iam.admin.common.AdminExceptions.NotFoundExcepti
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.UnprocessableException;
 import com.orochiverse.platform.iam.admin.operators.OperatorDtos.InviteOperatorRequest;
 import com.orochiverse.platform.iam.admin.operators.OperatorDtos.OperatorResponse;
+import com.orochiverse.platform.iam.admin.operators.OperatorDtos.SessionResponse;
 import com.orochiverse.platform.iam.admin.operators.OperatorDtos.UpdateOperatorRequest;
 import com.orochiverse.platform.iam.auth.RefreshTokenStore;
 import com.orochiverse.platform.iam.tokens.SingleUseToken;
@@ -153,6 +154,37 @@ public class OperatorsAdminService {
                         "expiresAt", accept.expiresAt().toString()));
     }
 
+    /**
+     * Re-send the invite email for an operator stuck in
+     * {@link UserStatus#INVITED}. Issues a fresh accept token and revokes
+     * any prior outstanding ones so the link from the original (unread)
+     * email becomes inert. 422 if the operator has already accepted.
+     */
+    public OperatorResponse resendInvite(String id, String actorUserId) {
+        User existing = loadOperatorOrThrow(id);
+        if (existing.status() != UserStatus.INVITED) {
+            throw new UnprocessableException(
+                    "operator " + id + " is not in INVITED status — no invite to resend");
+        }
+
+        // Drop any outstanding INVITE_ACCEPT tokens before issuing a new
+        // one. Safe to revoke everything: invited users haven't logged
+        // in yet, so there are no reset-password tokens to lose.
+        singleUseTokens.revokeAllForUser(id);
+        SingleUseToken accept = singleUseTokens.issue(id, TokenPurpose.INVITE_ACCEPT);
+        try {
+            sendOperatorInviteEmail(existing, existing.operatorRole().name(), accept);
+        } catch (RuntimeException e) {
+            log.warn("operator invite resend issued but email failed id={} email={}: {}",
+                    id, existing.email(), e.getMessage());
+        }
+
+        audit.save(AuditEntry.of(AuditAction.OPERATOR_INVITE_RESENT, actorUserId,
+                Map.of("operatorId", id, "email", existing.email())));
+        log.info("operator invite resent id={} actor={}", id, actorUserId);
+        return OperatorResponse.from(existing);
+    }
+
     public List<OperatorResponse> list(UserStatus statusFilter) {
         var status = statusFilter == null ? UserStatus.ACTIVE : statusFilter;
         return users.findAllByKindAndStatus(UserKind.OPERATOR, status).stream()
@@ -218,8 +250,11 @@ public class OperatorsAdminService {
             throw new UnprocessableException("operators cannot delete themselves");
         }
 
+        // Scramble the email so the unique index slot is freed for a future
+        // invite. The original lives on in the audit metadata below.
+        String originalEmail = existing.email();
         var deleted = new User(
-                existing.id(), existing.email(), existing.passwordHash(),
+                existing.id(), User.deletedEmailMarker(existing.id()), existing.passwordHash(),
                 existing.firstName(), existing.lastName(),
                 UserStatus.DELETED, existing.kind(), existing.operatorRole(),
                 null, null,
@@ -232,7 +267,7 @@ public class OperatorsAdminService {
         singleUseTokens.revokeAllForUser(id);
 
         audit.save(AuditEntry.of(AuditAction.OPERATOR_DELETED, actorUserId,
-                Map.of("operatorId", id)));
+                Map.of("operatorId", id, "email", originalEmail)));
         log.info("operator deleted id={} actor={}", id, actorUserId);
     }
 
@@ -243,5 +278,37 @@ public class OperatorsAdminService {
             throw new NotFoundException("user " + id + " is not an operator");
         }
         return u;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Sessions — admin viewing / revoking another operator's refresh
+    // tokens. Self-service equivalents live on /api/auth/me/sessions; this
+    // surface is for "operator X reported a lost laptop, kill their
+    // sessions without suspending the account" kind of flows.
+    // ─────────────────────────────────────────────────────────────────────
+
+    public List<SessionResponse> listSessions(String operatorId) {
+        loadOperatorOrThrow(operatorId);
+        return refreshTokens.listForUser(operatorId).stream()
+                .map(s -> new SessionResponse(s.id(), s.issuedAt(), s.expiresAt()))
+                .toList();
+    }
+
+    /**
+     * Idempotent: 204 whether or not the session id existed. Audits only
+     * on actual revocations so an admin sweeping a stale list doesn't
+     * spam the log.
+     */
+    public void revokeSession(String operatorId, String sessionId, String actorUserId) {
+        loadOperatorOrThrow(operatorId);
+        boolean revoked = refreshTokens.revokeByIdForUser(sessionId, operatorId);
+        if (revoked) {
+            audit.save(AuditEntry.of(AuditAction.TOKEN_REVOKED, actorUserId,
+                    Map.of("operatorId", operatorId,
+                            "sessionId", sessionId,
+                            "via", "admin")));
+            log.info("operator session revoked operator={} sessionId={} actor={}",
+                    operatorId, sessionId, actorUserId);
+        }
     }
 }

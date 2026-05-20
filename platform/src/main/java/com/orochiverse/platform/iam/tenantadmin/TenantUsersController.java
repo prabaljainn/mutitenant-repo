@@ -33,14 +33,15 @@ import io.swagger.v3.oas.annotations.tags.Tag;
  * from the verified {@code tid} claim), so tenant ids never appear in
  * these URLs.
  *
- * <p>Reads require any {@code TENANT_USER} role; writes require
- * {@code TENANT_OWNER} or {@code ADMIN}. EDITOR / VIEWER are read-only.
+ * <p>Reads require any {@code TENANT_USER} kind; writes require
+ * {@code ADMIN} role within the tenant. Members are read-only for the
+ * user-management surface.
  */
 @RestController
 @RequestMapping("/api/tenant/users")
 @ConditionalOnProperty(prefix = "spring.data.mongodb", name = "uri")
 @Tag(name = "Tenant: Users", description = "Self-service tenant user CRUD. "
-        + "Reads open to any tenant user; writes require TENANT_OWNER or ADMIN.")
+        + "Reads open to any tenant user; writes require ADMIN.")
 public class TenantUsersController {
 
     private final TenantUsersService service;
@@ -50,7 +51,7 @@ public class TenantUsersController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('TENANT_OWNER', 'ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<TenantUserResponse> invite(
             @Valid @RequestBody InviteTenantUserRequest req,
             @AuthenticationPrincipal AuthenticatedUser caller) {
@@ -71,7 +72,7 @@ public class TenantUsersController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('TENANT_OWNER', 'ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public TenantUserResponse update(@PathVariable String id,
                                      @Valid @RequestBody UpdateTenantUserRequest req,
                                      @AuthenticationPrincipal AuthenticatedUser caller) {
@@ -79,7 +80,7 @@ public class TenantUsersController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('TENANT_OWNER', 'ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable String id,
                                        @AuthenticationPrincipal AuthenticatedUser caller) {
         service.softDelete(id, caller.claims().userId());

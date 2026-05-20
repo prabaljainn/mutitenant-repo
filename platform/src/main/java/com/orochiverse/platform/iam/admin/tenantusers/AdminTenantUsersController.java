@@ -22,12 +22,12 @@ import org.springframework.web.bind.annotation.RestController;
 import com.orochiverse.platform.common.security.auth.AuthenticatedUser;
 import com.orochiverse.platform.common.tenant.TenantContext;
 import com.orochiverse.platform.iam.admin.common.AdminExceptions.NotFoundException;
+import com.orochiverse.platform.iam.admin.common.OperatorVisibility;
 import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.InviteTenantUserRequest;
 import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.TenantUserResponse;
 import com.orochiverse.platform.iam.tenantadmin.TenantSelfDtos.UpdateTenantUserRequest;
 import com.orochiverse.platform.iam.tenantadmin.TenantUsersService;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
-import com.orochiverse.platform.iam.tenants.TenantStatus;
 import com.orochiverse.platform.iam.users.UserStatus;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -43,9 +43,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
  * Each handler wraps its call in
  * {@link TenantContext#callIn(String, java.util.concurrent.Callable)} —
  * the service then runs as if it were a tenant-bound request, with
- * audit entries carrying the right {@code tenantId} field. Zero
- * duplication: every rule {@code TenantUsersService} enforces (owner
- * protection, cross-tenant 404s, role validation) applies here too.
+ * audit entries carrying the right {@code tenantId} field.
  *
  * <h2>RBAC</h2>
  * <ul>
@@ -54,12 +52,10 @@ import io.swagger.v3.oas.annotations.tags.Tag;
  *       admin tenant-write surface.</li>
  * </ul>
  *
- * <h2>404 on unknown tenant</h2>
- * The tenant must exist (in {@code iam_db.tenants}) before any of these
- * endpoints work — otherwise the bound context would point at a
- * non-existent tenant DB and the service would still happily report
- * "no users", which is misleading. We resolve the tenant up front and
- * 404 if it's missing.
+ * <h2>404 on unknown / deleted tenant</h2>
+ * Soft-deleted tenants are invisible to this surface — they 404 the
+ * same as a missing one. That keeps the "tenant gone" semantics
+ * consistent with the rest of the operator API.
  */
 @RestController
 @RequestMapping("/admin/api/tenants/{tenantId}/users")
@@ -71,10 +67,14 @@ public class AdminTenantUsersController {
 
     private final TenantUsersService service;
     private final TenantRepository tenants;
+    private final OperatorVisibility visibility;
 
-    public AdminTenantUsersController(TenantUsersService service, TenantRepository tenants) {
+    public AdminTenantUsersController(TenantUsersService service,
+                                      TenantRepository tenants,
+                                      OperatorVisibility visibility) {
         this.service = service;
         this.tenants = tenants;
+        this.visibility = visibility;
     }
 
     @PostMapping
@@ -83,7 +83,8 @@ public class AdminTenantUsersController {
             @PathVariable String tenantId,
             @Valid @RequestBody InviteTenantUserRequest req,
             @AuthenticationPrincipal AuthenticatedUser caller) {
-        requireActiveTenant(tenantId);
+        requireLiveTenant(tenantId);
+        visibility.requireVisibility(tenantId);
         var resp = TenantContext.callIn(tenantId,
                 () -> service.invite(req, caller.claims().userId()));
         return ResponseEntity.status(HttpStatus.CREATED).body(resp);
@@ -93,14 +94,16 @@ public class AdminTenantUsersController {
     @PreAuthorize("hasRole('OPERATOR')")
     public List<TenantUserResponse> list(@PathVariable String tenantId,
                                          @RequestParam(required = false) UserStatus status) {
-        requireTenantExists(tenantId);
+        requireLiveTenant(tenantId);
+        visibility.requireVisibility(tenantId);
         return TenantContext.callIn(tenantId, () -> service.list(status));
     }
 
     @GetMapping("/{userId}")
     @PreAuthorize("hasRole('OPERATOR')")
     public TenantUserResponse get(@PathVariable String tenantId, @PathVariable String userId) {
-        requireTenantExists(tenantId);
+        requireLiveTenant(tenantId);
+        visibility.requireVisibility(tenantId);
         return TenantContext.callIn(tenantId, () -> service.get(userId));
     }
 
@@ -110,7 +113,8 @@ public class AdminTenantUsersController {
                                      @PathVariable String userId,
                                      @Valid @RequestBody UpdateTenantUserRequest req,
                                      @AuthenticationPrincipal AuthenticatedUser caller) {
-        requireActiveTenant(tenantId);
+        requireLiveTenant(tenantId);
+        visibility.requireVisibility(tenantId);
         return TenantContext.callIn(tenantId,
                 () -> service.update(userId, req, caller.claims().userId()));
     }
@@ -120,7 +124,8 @@ public class AdminTenantUsersController {
     public ResponseEntity<Void> delete(@PathVariable String tenantId,
                                        @PathVariable String userId,
                                        @AuthenticationPrincipal AuthenticatedUser caller) {
-        requireActiveTenant(tenantId);
+        requireLiveTenant(tenantId);
+        visibility.requireVisibility(tenantId);
         TenantContext.callIn(tenantId, () -> {
             service.softDelete(userId, caller.claims().userId());
             return null;
@@ -128,24 +133,21 @@ public class AdminTenantUsersController {
         return ResponseEntity.noContent().build();
     }
 
-    /** 404 if the tenant document doesn't exist. */
-    private void requireTenantExists(String tenantId) {
-        if (!tenants.existsById(tenantId)) {
-            throw new NotFoundException("tenant " + tenantId + " not found");
-        }
+    @PostMapping("/{userId}/resend-invite")
+    @PreAuthorize("hasRole('OPERATOR_ADMIN')")
+    public TenantUserResponse resendInvite(@PathVariable String tenantId,
+                                           @PathVariable String userId,
+                                           @AuthenticationPrincipal AuthenticatedUser caller) {
+        requireLiveTenant(tenantId);
+        visibility.requireVisibility(tenantId);
+        return TenantContext.callIn(tenantId,
+                () -> service.resendInvite(userId, caller.claims().userId()));
     }
 
-    /**
-     * 404 if missing; 422 if archived. Writes against an archived tenant
-     * land in a dropped DB (assignments etc. still in iam_db but
-     * pointing nowhere) — clearer to refuse them up front.
-     */
-    private void requireActiveTenant(String tenantId) {
-        var t = tenants.findById(tenantId)
-                .orElseThrow(() -> new NotFoundException("tenant " + tenantId + " not found"));
-        if (t.status() == TenantStatus.ARCHIVED) {
-            throw new com.orochiverse.platform.iam.admin.common.AdminExceptions
-                    .UnprocessableException("tenant " + tenantId + " is archived");
+    /** 404 if the tenant document is missing or soft-deleted. */
+    private void requireLiveTenant(String tenantId) {
+        if (tenants.findByIdAndDeletedAtIsNull(tenantId).isEmpty()) {
+            throw new NotFoundException("tenant " + tenantId + " not found");
         }
     }
 }

@@ -27,19 +27,17 @@ import com.orochiverse.platform.iam.operators.OperatorAssignment;
 import com.orochiverse.platform.iam.operators.OperatorAssignmentRepository;
 import com.orochiverse.platform.iam.tenants.Tenant;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
-import com.orochiverse.platform.iam.tenants.TenantStatus;
 import com.orochiverse.platform.iam.users.User;
 import com.orochiverse.platform.iam.users.UserRepository;
 import com.orochiverse.platform.testsupport.MongoTestSupport;
 
 /**
- * End-to-end exercise of the Phase 1.4 data layer — Spring Data Mongo
- * repositories against the real {@code iam_db} (started by
- * {@code ./scripts/dev-up.sh}), plus verification that the Mongock baseline
- * indexes were applied at startup.
+ * End-to-end exercise of the data layer — Spring Data Mongo repositories
+ * against the real {@code iam_db}, plus verification that the Mongock
+ * baseline indexes were applied at startup.
  *
  * <p>Each test scopes its data with a unique random suffix so re-runs and
- * concurrent CI executions don't collide. {@link #afterEach} deletes
+ * concurrent CI executions don't collide. {@link #cleanup} deletes
  * everything it created.
  */
 @SpringBootTest
@@ -75,7 +73,6 @@ class IamRepositoriesIT {
 
     @AfterEach
     void cleanup() {
-        // Best-effort cleanup of every doc this test class might create.
         users.deleteById(operatorId);
         users.deleteById(tenantUserId);
         tenants.deleteById(tenantA);
@@ -94,7 +91,7 @@ class IamRepositoriesIT {
         assertThat(indexNames("users"))
                 .contains("uniq_users_email", "idx_users_kind", "idx_users_status",
                         "idx_users_tenant_status");
-        assertThat(indexNames("tenants")).contains("idx_tenants_status");
+        assertThat(indexNames("tenants")).contains("idx_tenants_deletedAt");
         assertThat(indexNames("operator_assignments"))
                 .contains("uniq_opassign_user_tenant", "idx_opassign_tenant");
         assertThat(indexNames("audit_log"))
@@ -117,12 +114,27 @@ class IamRepositoriesIT {
 
     @Test
     void can_save_and_find_a_tenant() {
-        var t = Tenant.newTrial(tenantA, "Acme Corp", "STARTER", operatorId);
+        var t = Tenant.create(tenantA, "Acme Corp", operatorId);
         tenants.save(t);
 
-        var found = tenants.findById(tenantA).orElseThrow();
+        var found = tenants.findByIdAndDeletedAtIsNull(tenantA).orElseThrow();
         assertThat(found.name()).isEqualTo("Acme Corp");
-        assertThat(found.status()).isEqualTo(TenantStatus.TRIAL);
+        assertThat(found.ownerUserId()).isNull();
+        assertThat(found.deletedAt()).isNull();
+    }
+
+    @Test
+    void soft_deleted_tenant_is_hidden_from_filtered_queries() {
+        tenants.save(Tenant.create(tenantA, "Acme", operatorId));
+        var live = tenants.findByIdAndDeletedAtIsNull(tenantA);
+        assertThat(live).isPresent();
+
+        tenants.save(tenants.findById(tenantA).orElseThrow().withDeleted());
+
+        var afterDelete = tenants.findByIdAndDeletedAtIsNull(tenantA);
+        assertThat(afterDelete).isEmpty();
+        // Raw findById still sees it — the soft-delete is filter-driven, not destructive.
+        assertThat(tenants.findById(tenantA)).isPresent();
     }
 
     @Test
@@ -141,7 +153,7 @@ class IamRepositoriesIT {
     void can_save_a_tenant_user_and_find_by_email_case_insensitively() {
         var email = "Bob-" + suffix + "@acme.example";
         var u = User.newTenantUser(tenantUserId, email, "hash",
-                "Bob", "Doe", tenantA, TenantRole.TENANT_OWNER);
+                "Bob", "Doe", tenantA, TenantRole.ADMIN);
         users.save(u);
 
         var lower = users.findByEmailIgnoreCase(email.toLowerCase()).orElseThrow();
@@ -158,10 +170,8 @@ class IamRepositoriesIT {
 
         var dup = User.newTenantUser(tenantUserId, sharedEmail, "h",
                 "C", "D", tenantA, TenantRole.ADMIN);
-        // Save MUST fail on the duplicate-key index.
         try {
             users.save(dup);
-            // If we get here, uniqueness wasn't enforced.
             assertThat(false).as("expected DuplicateKeyException on duplicate email").isTrue();
         } catch (org.springframework.dao.DuplicateKeyException expected) {
             // pass
@@ -176,8 +186,8 @@ class IamRepositoriesIT {
     void can_grant_and_query_operator_assignments() {
         users.save(User.newOperator(operatorId, "op-" + suffix + "@orochi.example",
                 "h", "Op", "User", OperatorRole.OPERATOR_ADMIN));
-        tenants.save(Tenant.newTrial(tenantA, "Acme", "STARTER", operatorId));
-        tenants.save(Tenant.newTrial(tenantB, "Vega", "STARTER", operatorId));
+        tenants.save(Tenant.create(tenantA, "Acme", operatorId));
+        tenants.save(Tenant.create(tenantB, "Vega", operatorId));
 
         assignments.save(OperatorAssignment.grant(operatorId, tenantA, operatorId));
         assignments.save(OperatorAssignment.grant(operatorId, tenantB, operatorId));
@@ -196,7 +206,7 @@ class IamRepositoriesIT {
     void operator_assignment_uniqueness_is_enforced() {
         users.save(User.newOperator(operatorId, "op2-" + suffix + "@orochi.example",
                 "h", "Op", "User", OperatorRole.OPERATOR_ADMIN));
-        tenants.save(Tenant.newTrial(tenantA, "Acme", "STARTER", operatorId));
+        tenants.save(Tenant.create(tenantA, "Acme", operatorId));
 
         assignments.save(OperatorAssignment.grant(operatorId, tenantA, operatorId));
         try {
@@ -232,9 +242,5 @@ class IamRepositoriesIT {
         iamTemplate.getCollection(collection).listIndexes().forEach(idx ->
                 names.add(idx.getString("name")));
         return names;
-    }
-
-    private void assertNotNullDocument(Document d) {
-        if (d == null) throw new AssertionError("expected non-null Document");
     }
 }

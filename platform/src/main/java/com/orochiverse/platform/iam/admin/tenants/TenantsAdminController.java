@@ -22,14 +22,14 @@ import org.springframework.web.bind.annotation.RestController;
 import com.orochiverse.platform.common.security.auth.AuthenticatedUser;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.CreateTenantRequest;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.TenantResponse;
+import com.orochiverse.platform.iam.admin.tenants.TenantDtos.TransferOwnershipRequest;
 import com.orochiverse.platform.iam.admin.tenants.TenantDtos.UpdateTenantRequest;
-import com.orochiverse.platform.iam.tenants.TenantStatus;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
  * Operator-facing tenant CRUD. Reads are open to any operator; writes
- * require {@code OPERATOR_ADMIN} per spec §7.
+ * require {@code OPERATOR_ADMIN}.
  */
 @RestController
 @RequestMapping("/admin/api/tenants")
@@ -54,9 +54,8 @@ public class TenantsAdminController {
 
     @GetMapping
     @PreAuthorize("hasRole('OPERATOR')")
-    public List<TenantResponse> list(@RequestParam(required = false) TenantStatus status,
-                                     @RequestParam(required = false) String q) {
-        return service.list(status, q);
+    public List<TenantResponse> list(@RequestParam(required = false) String q) {
+        return service.list(q);
     }
 
     @GetMapping("/{id}")
@@ -79,5 +78,13 @@ public class TenantsAdminController {
                                        @AuthenticationPrincipal AuthenticatedUser caller) {
         service.softDelete(id, caller.claims().userId());
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{id}/owner")
+    @PreAuthorize("hasRole('OPERATOR_ADMIN')")
+    public TenantResponse transferOwnership(@PathVariable String id,
+                                            @Valid @RequestBody TransferOwnershipRequest req,
+                                            @AuthenticationPrincipal AuthenticatedUser caller) {
+        return service.transferOwnership(id, req.newOwnerUserId(), caller.claims().userId());
     }
 }

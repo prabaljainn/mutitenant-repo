@@ -25,6 +25,8 @@ import com.orochiverse.platform.common.security.passwords.PasswordHashing;
 import com.orochiverse.platform.common.security.principals.OperatorRole;
 import com.orochiverse.platform.common.security.principals.TenantRole;
 import com.orochiverse.platform.common.tenant.TenantId;
+import com.orochiverse.platform.iam.operators.OperatorAssignment;
+import com.orochiverse.platform.iam.operators.OperatorAssignmentRepository;
 import com.orochiverse.platform.iam.tenants.Tenant;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
 import com.orochiverse.platform.iam.users.UserRepository;
@@ -51,6 +53,7 @@ class AdminTenantUsersControllerIT {
     @LocalServerPort int port;
     @Autowired UserRepository users;
     @Autowired TenantRepository tenants;
+    @Autowired OperatorAssignmentRepository assignments;
     @Autowired PasswordHashing passwords;
     @Autowired AccessTokenIssuer issuer;
     @Autowired MongoClient mongo;
@@ -61,7 +64,7 @@ class AdminTenantUsersControllerIT {
     private String adminToken;
     private String supportToken;
     private String tenantId;
-    private String tenantUserId;
+    private String ownerUserId;
     private String createdInviteId;
 
     @BeforeEach
@@ -83,19 +86,22 @@ class AdminTenantUsersControllerIT {
         supportToken = JwtTestSupport.token(issuer, support);
 
         tenantId = "atu" + suffix;
-        tenants.save(Tenant.newTrial(tenantId, "Atu " + suffix, "STARTER", adminId));
 
-        // One existing TENANT_OWNER so single-owner rules can be tested.
-        tenantUserId = IamFixtures.tenantUser("own-" + suffix, tenantId)
-                .role(TenantRole.TENANT_OWNER)
+        // Seed an ADMIN tenant user and mark them as the tenant owner —
+        // mirrors what auto-promote-first-admin does in production.
+        ownerUserId = IamFixtures.tenantUser("own-" + suffix, tenantId)
+                .role(TenantRole.ADMIN)
                 .save(users, passwords).id();
+        tenants.save(Tenant.create(tenantId, "Atu " + suffix, adminId).withOwner(ownerUserId));
     }
 
     @AfterEach
     void cleanup() {
+        assignments.findAllByOperatorUserId(supportId)
+                .forEach(a -> assignments.deleteById(a.id()));
         users.deleteById(adminId);
         users.deleteById(supportId);
-        users.deleteById(tenantUserId);
+        users.deleteById(ownerUserId);
         if (createdInviteId != null) users.deleteById(createdInviteId);
         tenants.deleteById(tenantId);
         mongo.getDatabase(TenantId.dbName(tenantId)).drop();
@@ -103,13 +109,24 @@ class AdminTenantUsersControllerIT {
 
     @Test
     @SuppressWarnings("unchecked")
-    void list_returns_only_the_tenants_users_for_any_operator() {
+    void list_returns_tenant_users_for_assigned_support() {
+        // SUPPORT must be assigned to see the tenant — list would 404 otherwise.
+        assignments.save(OperatorAssignment.grant(supportId, tenantId, adminId));
+
         var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users",
                 HttpMethod.GET, supportToken, null, List.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         var ids = resp.getBody().stream()
                 .map(r -> ((Map<String, Object>) r).get("id")).toList();
-        assertThat(ids).contains(tenantUserId);
+        assertThat(ids).contains(ownerUserId);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void unassigned_support_gets_404_on_tenant_users_list() {
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users",
+                HttpMethod.GET, supportToken, null, Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
     @Test
@@ -118,7 +135,7 @@ class AdminTenantUsersControllerIT {
         var email = "new-" + suffix + "@a.example";
         var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users",
                 HttpMethod.POST, adminToken,
-                Map.of("email", email, "firstName", "N", "lastName", "U", "role", "EDITOR"),
+                Map.of("email", email, "firstName", "N", "lastName", "U", "role", "MEMBER"),
                 Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
@@ -126,7 +143,7 @@ class AdminTenantUsersControllerIT {
 
         var stored = users.findById(createdInviteId).orElseThrow();
         assertThat(stored.tenantId()).isEqualTo(tenantId);
-        assertThat(stored.passwordHash()).isNull(); // INVITED, no password yet
+        assertThat(stored.passwordHash()).isNull();
     }
 
     @Test
@@ -135,7 +152,7 @@ class AdminTenantUsersControllerIT {
         var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users",
                 HttpMethod.POST, supportToken,
                 Map.of("email", "x-" + suffix + "@a.example",
-                        "firstName", "X", "lastName", "Y", "role", "EDITOR"),
+                        "firstName", "X", "lastName", "Y", "role", "MEMBER"),
                 Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
@@ -150,12 +167,44 @@ class AdminTenantUsersControllerIT {
 
     @Test
     @SuppressWarnings("unchecked")
-    void owner_protection_is_inherited_from_the_tenant_side_service() {
-        // The one TENANT_OWNER cannot be demoted — same rule the tenant-
-        // side service enforces.
-        var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users/" + tenantUserId,
+    void owner_cannot_be_demoted_via_admin_side_either() {
+        // The same owner-protection the tenant-side service enforces fires
+        // here too — the admin route delegates to TenantUsersService.
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users/" + ownerUserId,
                 HttpMethod.PUT, adminToken,
-                Map.of("role", "ADMIN"), Map.class);
+                Map.of("role", "MEMBER"), Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Resend invite
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resend_invite_succeeds_for_invited_tenant_user() {
+        // Create an INVITED user first via the invite endpoint.
+        var invite = IT.exchange(port, "/admin/api/tenants/" + tenantId + "/users",
+                HttpMethod.POST, adminToken,
+                Map.of("email", "re-" + suffix + "@a.example",
+                        "firstName", "Re", "lastName", "Send", "role", "MEMBER"),
+                Map.class);
+        createdInviteId = (String) invite.getBody().get("id");
+
+        var resp = IT.exchange(port,
+                "/admin/api/tenants/" + tenantId + "/users/" + createdInviteId + "/resend-invite",
+                HttpMethod.POST, adminToken, null, Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).containsEntry("status", "INVITED");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resend_invite_returns_422_for_active_tenant_user() {
+        // ownerUserId is seeded as ACTIVE in setUp.
+        var resp = IT.exchange(port,
+                "/admin/api/tenants/" + tenantId + "/users/" + ownerUserId + "/resend-invite",
+                HttpMethod.POST, adminToken, null, Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
     }
 }

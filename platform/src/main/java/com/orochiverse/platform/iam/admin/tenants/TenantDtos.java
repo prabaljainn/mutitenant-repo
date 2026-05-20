@@ -6,53 +6,50 @@ import java.util.Map;
 import jakarta.validation.constraints.NotBlank;
 
 import com.orochiverse.platform.iam.tenants.Tenant;
-import com.orochiverse.platform.iam.tenants.TenantStatus;
 
 /**
  * Request and response DTOs for the {@code /admin/api/tenants} surface.
  *
- * <p>We expose response DTOs (not the persistence record) so we can evolve
- * the storage shape — e.g. add internal fields like {@code billingProvider}
- * — without breaking the API contract. The mapping is intentionally
- * mechanical; no field is computed or hidden today.
+ * <p>Response DTOs are separate from the persistence record so the storage
+ * shape can evolve without breaking the API contract. {@code deletedAt} is
+ * intentionally omitted — soft-deleted tenants are filtered out of every
+ * read path, so the response shape only ever describes a live tenant.
  */
 public final class TenantDtos {
 
     private TenantDtos() {}
 
-    /**
-     * Bean-Validation runs on {@code id} via the {@link TenantId regex}
-     * downstream — we don't repeat the pattern here so the rule lives in
-     * one place, but we do reject blank up front for a cleaner 400.
-     */
     public record CreateTenantRequest(
-            @NotBlank String id,
-            @NotBlank String name,
-            @NotBlank String plan) {}
+            @NotBlank String name) {}
 
     /**
-     * Partial update — null fields are left alone. Allows reusing the
-     * single endpoint for "rename", "change plan", "edit settings"
-     * without three separate routes.
+     * Partial update — null fields are left alone. Lets a single endpoint
+     * handle rename or settings edits without separate routes.
      */
     public record UpdateTenantRequest(
             String name,
-            String plan,
             Map<String, Object> settings) {}
+
+    /**
+     * Hands ownership of the tenant to another active tenant ADMIN. The
+     * previous owner stays as a plain ADMIN — they keep their rights but
+     * lose owner-protection.
+     */
+    public record TransferOwnershipRequest(
+            @NotBlank String newOwnerUserId) {}
 
     public record TenantResponse(
             String id,
             String name,
-            TenantStatus status,
-            String plan,
             Map<String, Object> settings,
+            String ownerUserId,
             String createdBy,
             Instant createdAt,
             Instant updatedAt) {
 
         public static TenantResponse from(Tenant t) {
-            return new TenantResponse(t.id(), t.name(), t.status(), t.plan(),
-                    t.settings(), t.createdBy(), t.createdAt(), t.updatedAt());
+            return new TenantResponse(t.id(), t.name(), t.settings(), t.ownerUserId(),
+                    t.createdBy(), t.createdAt(), t.updatedAt());
         }
     }
 }

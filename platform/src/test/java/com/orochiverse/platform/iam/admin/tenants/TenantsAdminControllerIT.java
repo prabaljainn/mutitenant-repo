@@ -2,6 +2,7 @@ package com.orochiverse.platform.iam.admin.tenants;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -22,10 +23,13 @@ import com.mongodb.client.MongoClient;
 import com.orochiverse.platform.common.security.jwt.AccessTokenIssuer;
 import com.orochiverse.platform.common.security.passwords.PasswordHashing;
 import com.orochiverse.platform.common.security.principals.OperatorRole;
+import com.orochiverse.platform.common.security.principals.TenantRole;
 import com.orochiverse.platform.common.tenant.TenantId;
+import com.orochiverse.platform.iam.operators.OperatorAssignment;
+import com.orochiverse.platform.iam.operators.OperatorAssignmentRepository;
 import com.orochiverse.platform.iam.tenants.TenantRepository;
-import com.orochiverse.platform.iam.tenants.TenantStatus;
 import com.orochiverse.platform.iam.users.UserRepository;
+import com.orochiverse.platform.iam.users.UserStatus;
 import com.orochiverse.platform.testsupport.IT;
 import com.orochiverse.platform.testsupport.IamFixtures;
 import com.orochiverse.platform.testsupport.JwtTestSupport;
@@ -44,6 +48,7 @@ class TenantsAdminControllerIT {
     @org.springframework.boot.test.web.server.LocalServerPort int port;
     @Autowired UserRepository users;
     @Autowired TenantRepository tenants;
+    @Autowired OperatorAssignmentRepository assignments;
     @Autowired PasswordHashing passwords;
     @Autowired AccessTokenIssuer issuer;
     @Autowired MongoClient mongo;
@@ -53,7 +58,10 @@ class TenantsAdminControllerIT {
     private String supportId;
     private String adminToken;
     private String supportToken;
-    private String tenantId;
+    // Tracks every tenant created during a test so @AfterEach can clean
+    // up the docs and per-tenant DBs even though the id is server-assigned.
+    private final List<String> createdTenantIds = new ArrayList<>();
+    private final List<String> createdUserIds = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -72,15 +80,49 @@ class TenantsAdminControllerIT {
         supportId = support.id();
         adminToken = JwtTestSupport.token(issuer, admin);
         supportToken = JwtTestSupport.token(issuer, support);
-        tenantId = "p17b" + suffix;
+        createdTenantIds.clear();
     }
 
     @AfterEach
     void cleanup() {
+        // Clean any assignments granted in the test before deleting users.
+        assignments.findAllByOperatorUserId(supportId)
+                .forEach(a -> assignments.deleteById(a.id()));
+        for (String id : createdUserIds) users.deleteById(id);
         users.deleteById(adminId);
         users.deleteById(supportId);
-        tenants.deleteById(tenantId);
-        mongo.getDatabase(TenantId.dbName(tenantId)).drop();
+        for (String id : createdTenantIds) {
+            tenants.deleteById(id);
+            mongo.getDatabase(TenantId.dbName(id)).drop();
+        }
+    }
+
+    /** Seed a tenant user directly via repo so the test doesn't depend on the invite flow. */
+    private String seedTenantUser(String tenantId, TenantRole role, UserStatus status) {
+        // Per-user suffix so id+email stay unique across the test.
+        String uniq = suffix + "-" + createdUserIds.size();
+        var u = IamFixtures.tenantUser(uniq, tenantId)
+                .role(role)
+                .status(status)
+                .save(users, passwords);
+        createdUserIds.add(u.id());
+        return u.id();
+    }
+
+    /** Grants the test's SUPPORT operator visibility into a tenant. */
+    private void assignSupportTo(String tenantId) {
+        assignments.save(OperatorAssignment.grant(supportId, tenantId, adminId));
+    }
+
+    /** Creates a tenant via the API and records its server-assigned id. */
+    @SuppressWarnings("unchecked")
+    private String createTenant(String token, String name) {
+        var resp = IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, token,
+                Map.of("name", name), Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        String id = (String) resp.getBody().get("id");
+        createdTenantIds.add(id);
+        return id;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -91,43 +133,48 @@ class TenantsAdminControllerIT {
     @SuppressWarnings("unchecked")
     void admin_can_create_a_tenant_and_db_is_provisioned() {
         var resp = IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme " + suffix, "plan", "STARTER"), Map.class);
+                Map.of("name", "Acme " + suffix), Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        assertThat(resp.getBody()).containsEntry("id", tenantId);
-        assertThat(resp.getBody()).containsEntry("status", "TRIAL");
+        String id = (String) resp.getBody().get("id");
+        createdTenantIds.add(id);
 
-        // Tenant DB exists in Mongo.
+        // Slug derived from name, lowercase + hyphenated, valid for Mongo.
+        assertThat(id).matches("^[a-z0-9][a-z0-9-]*$");
+        assertThat(id).startsWith("acme-");
+        assertThat(resp.getBody()).containsEntry("ownerUserId", null);
+
         var dbNames = mongo.listDatabaseNames().into(new java.util.ArrayList<>());
-        assertThat(dbNames).contains(TenantId.dbName(tenantId));
+        assertThat(dbNames).contains(TenantId.dbName(id));
+    }
+
+    @Test
+    void duplicate_name_yields_distinct_ids() {
+        // Same display name twice — server should slugify both, then
+        // disambiguate the second with a random suffix instead of 409ing.
+        String first = createTenant(adminToken, "Acme " + suffix);
+        String second = createTenant(adminToken, "Acme " + suffix);
+
+        assertThat(second).isNotEqualTo(first);
+        // Both share the slug base; the second gets a -xxxx suffix.
+        assertThat(first).startsWith("acme-");
+        assertThat(second).startsWith(first + "-");
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void duplicate_create_returns_409() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme", "plan", "STARTER"), Map.class);
-
-        var dup = IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme", "plan", "STARTER"), Map.class);
-
-        assertThat(dup.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-        assertThat(dup.getBody()).containsEntry("error", "conflict");
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void invalid_tenant_id_returns_400() {
+    void blank_name_returns_400() {
         var resp = IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", "Bad Id With Spaces", "name", "Acme", "plan", "STARTER"), Map.class);
+                Map.of("name", ""), Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     void support_cannot_create_a_tenant() {
         var resp = IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, supportToken,
-                Map.of("id", tenantId, "name", "Acme", "plan", "STARTER"), Map.class);
+                Map.of("name", "Acme"), Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
@@ -137,11 +184,11 @@ class TenantsAdminControllerIT {
     // ─────────────────────────────────────────────────────────────────────
 
     @Test
-    void list_visible_to_support_role() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme", "plan", "STARTER"), Map.class);
+    void list_visible_to_support_role_for_assigned_tenants() {
+        String id = createTenant(adminToken, "Acme " + suffix);
+        assignSupportTo(id);
 
-        var resp = IT.exchange(port, "/admin/api/tenants?status=TRIAL",
+        var resp = IT.exchange(port, "/admin/api/tenants",
                 HttpMethod.GET, supportToken, null, List.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -151,11 +198,9 @@ class TenantsAdminControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void list_filters_by_q_substring_case_insensitive() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Skyhawk-" + suffix, "plan", "STARTER"),
-                Map.class);
+        String id = createTenant(adminToken, "Skyhawk-" + suffix);
+        assignSupportTo(id);
 
-        // Substring of the tenant name, lowercase — should still match.
         var hits = IT.exchange(port, "/admin/api/tenants?q=skyhawk",
                 HttpMethod.GET, supportToken, null, List.class);
         assertThat(hits.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -164,11 +209,75 @@ class TenantsAdminControllerIT {
                 .toList();
         assertThat(names).anyMatch(n -> n.startsWith("Skyhawk-"));
 
-        // No-match returns an empty list, not a 404.
         var misses = IT.exchange(port, "/admin/api/tenants?q=zzz-no-such-" + suffix,
                 HttpMethod.GET, supportToken, null, List.class);
         assertThat(misses.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(misses.getBody()).isEmpty();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // SUPPORT visibility scoping (assignments-based)
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void support_without_assignment_sees_no_tenants_in_list() {
+        // Admin creates a tenant. Support has no assignment to it.
+        createTenant(adminToken, "Hidden " + suffix);
+
+        var resp = IT.exchange(port, "/admin/api/tenants",
+                HttpMethod.GET, supportToken, null, List.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        // The created tenant must not surface for unassigned SUPPORT.
+        // Other tests in parallel may have unrelated rows, so we check
+        // that none belong to this suffix.
+        List<String> names = (List<String>) resp.getBody().stream()
+                .map(r -> ((Map<String, Object>) r).get("name").toString())
+                .toList();
+        assertThat(names).noneMatch(n -> n.contains(suffix));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void support_without_assignment_gets_404_on_tenant_get() {
+        String id = createTenant(adminToken, "Hidden " + suffix);
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + id,
+                HttpMethod.GET, supportToken, null, Map.class);
+
+        // 404, not 403 — defense-in-depth so SUPPORT can't enumerate ids.
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(resp.getBody()).containsEntry("error", "not_found");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void support_with_assignment_can_get_tenant() {
+        String id = createTenant(adminToken, "Visible " + suffix);
+        assignSupportTo(id);
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + id,
+                HttpMethod.GET, supportToken, null, Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).containsEntry("id", id);
+    }
+
+    @Test
+    void admin_sees_every_tenant_regardless_of_assignments() {
+        String id1 = createTenant(adminToken, "A " + suffix);
+        String id2 = createTenant(adminToken, "B " + suffix);
+
+        var resp = IT.exchange(port, "/admin/api/tenants",
+                HttpMethod.GET, adminToken, null, List.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        @SuppressWarnings("unchecked")
+        List<String> ids = (List<String>) resp.getBody().stream()
+                .map(r -> ((java.util.Map<String, Object>) r).get("id"))
+                .toList();
+        assertThat(ids).contains(id1, id2);
     }
 
     @Test
@@ -187,25 +296,22 @@ class TenantsAdminControllerIT {
 
     @Test
     @SuppressWarnings("unchecked")
-    void admin_can_rename_and_change_plan() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme", "plan", "STARTER"), Map.class);
+    void admin_can_rename_a_tenant() {
+        String id = createTenant(adminToken, "Acme " + suffix);
 
-        var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId,
+        var resp = IT.exchange(port, "/admin/api/tenants/" + id,
                 HttpMethod.PUT, adminToken,
-                Map.of("name", "Acme Renamed", "plan", "ENTERPRISE"), Map.class);
+                Map.of("name", "Acme Renamed"), Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).containsEntry("name", "Acme Renamed");
-        assertThat(resp.getBody()).containsEntry("plan", "ENTERPRISE");
     }
 
     @Test
     void support_cannot_update() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme", "plan", "STARTER"), Map.class);
+        String id = createTenant(adminToken, "Acme " + suffix);
 
-        var resp = IT.exchange(port, "/admin/api/tenants/" + tenantId,
+        var resp = IT.exchange(port, "/admin/api/tenants/" + id,
                 HttpMethod.PUT, supportToken, Map.of("name", "Hijacked"), Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
@@ -218,19 +324,139 @@ class TenantsAdminControllerIT {
     @Test
     @SuppressWarnings("unchecked")
     void admin_can_soft_delete_and_db_is_dropped() {
-        IT.exchange(port, "/admin/api/tenants", HttpMethod.POST, adminToken,
-                Map.of("id", tenantId, "name", "Acme", "plan", "STARTER"), Map.class);
+        String id = createTenant(adminToken, "Acme " + suffix);
 
-        var del = IT.exchange(port, "/admin/api/tenants/" + tenantId,
+        var del = IT.exchange(port, "/admin/api/tenants/" + id,
                 HttpMethod.DELETE, adminToken, null, Void.class);
 
         assertThat(del.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
 
-        // Status flipped to ARCHIVED, DB gone.
-        var t = tenants.findById(tenantId).orElseThrow();
-        assertThat(t.status()).isEqualTo(TenantStatus.ARCHIVED);
+        // deletedAt is stamped, DB gone, filtered findById sees nothing.
+        var raw = tenants.findById(id).orElseThrow();
+        assertThat(raw.deletedAt()).isNotNull();
+        assertThat(tenants.findByIdAndDeletedAtIsNull(id)).isEmpty();
         var dbNames = mongo.listDatabaseNames().into(new java.util.ArrayList<>());
-        assertThat(dbNames).doesNotContain(TenantId.dbName(tenantId));
+        assertThat(dbNames).doesNotContain(TenantId.dbName(id));
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void soft_deleted_tenants_are_hidden_from_list_and_get() {
+        String id = createTenant(adminToken, "Acme " + suffix);
+        IT.exchange(port, "/admin/api/tenants/" + id,
+                HttpMethod.DELETE, adminToken, null, Void.class);
+
+        var get = IT.exchange(port, "/admin/api/tenants/" + id,
+                HttpMethod.GET, supportToken, null, Map.class);
+        assertThat(get.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+
+        var list = IT.exchange(port, "/admin/api/tenants",
+                HttpMethod.GET, supportToken, null, List.class);
+        assertThat(list.getStatusCode()).isEqualTo(HttpStatus.OK);
+        List<String> ids = ((List<Map<String, Object>>) list.getBody()).stream()
+                .map(r -> (String) r.get("id")).toList();
+        assertThat(ids).doesNotContain(id);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Ownership transfer
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void transfer_ownership_to_another_admin_succeeds() {
+        String tid = createTenant(adminToken, "Acme " + suffix);
+        // Seed two ADMINs: current owner + the new candidate.
+        String currentOwner = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.ACTIVE);
+        String newOwner = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.ACTIVE);
+        tenants.save(tenants.findById(tid).orElseThrow().withOwner(currentOwner));
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tid + "/owner",
+                HttpMethod.POST, adminToken,
+                Map.of("newOwnerUserId", newOwner), Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).containsEntry("ownerUserId", newOwner);
+        assertThat(tenants.findById(tid).orElseThrow().ownerUserId()).isEqualTo(newOwner);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void transfer_to_member_returns_422() {
+        String tid = createTenant(adminToken, "Acme " + suffix);
+        String currentOwner = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.ACTIVE);
+        String target = seedTenantUser(tid, TenantRole.MEMBER, UserStatus.ACTIVE);
+        tenants.save(tenants.findById(tid).orElseThrow().withOwner(currentOwner));
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tid + "/owner",
+                HttpMethod.POST, adminToken,
+                Map.of("newOwnerUserId", target), Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void transfer_to_suspended_admin_returns_422() {
+        String tid = createTenant(adminToken, "Acme " + suffix);
+        String currentOwner = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.ACTIVE);
+        String target = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.SUSPENDED);
+        tenants.save(tenants.findById(tid).orElseThrow().withOwner(currentOwner));
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tid + "/owner",
+                HttpMethod.POST, adminToken,
+                Map.of("newOwnerUserId", target), Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void transfer_to_user_in_a_different_tenant_returns_422() {
+        String tid = createTenant(adminToken, "Acme " + suffix);
+        String otherTid = createTenant(adminToken, "Other " + suffix);
+        String otherTenantAdmin = seedTenantUser(otherTid, TenantRole.ADMIN, UserStatus.ACTIVE);
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tid + "/owner",
+                HttpMethod.POST, adminToken,
+                Map.of("newOwnerUserId", otherTenantAdmin), Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void transfer_to_current_owner_returns_422() {
+        String tid = createTenant(adminToken, "Acme " + suffix);
+        String currentOwner = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.ACTIVE);
+        tenants.save(tenants.findById(tid).orElseThrow().withOwner(currentOwner));
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tid + "/owner",
+                HttpMethod.POST, adminToken,
+                Map.of("newOwnerUserId", currentOwner), Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void transfer_on_unknown_tenant_returns_404() {
+        var resp = IT.exchange(port, "/admin/api/tenants/no-such/owner",
+                HttpMethod.POST, adminToken,
+                Map.of("newOwnerUserId", "tu-doesnt-matter"), Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void support_cannot_transfer_ownership() {
+        String tid = createTenant(adminToken, "Acme " + suffix);
+        String newOwner = seedTenantUser(tid, TenantRole.ADMIN, UserStatus.ACTIVE);
+        assignSupportTo(tid);
+
+        var resp = IT.exchange(port, "/admin/api/tenants/" + tid + "/owner",
+                HttpMethod.POST, supportToken,
+                Map.of("newOwnerUserId", newOwner), Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
 }

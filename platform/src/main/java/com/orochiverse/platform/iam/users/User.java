@@ -114,6 +114,22 @@ public record User(
                 tenantId, role, 0, null, now, now);
     }
 
+    /**
+     * Marker email used on soft-deleted users. Soft-delete rewrites
+     * {@code email} to this value so the unique index slot for the
+     * original email is freed — a future invite can reclaim the address.
+     * The original email is preserved in the deletion audit row for
+     * forensic lookup.
+     *
+     * <p>{@code .invalid} is RFC 2606 reserved for guaranteed-non-routable
+     * addresses, so even if this leaks into a UI it can't accidentally
+     * trigger a real send. The {@code userId} suffix makes the marker
+     * globally unique across deletes.
+     */
+    public static String deletedEmailMarker(String userId) {
+        return "deleted+" + userId + "@deleted.invalid";
+    }
+
     /** Convenience: returns true if this user can act inside the given tenant. */
     public boolean canAccess(String targetTenantId) {
         return switch (kind) {

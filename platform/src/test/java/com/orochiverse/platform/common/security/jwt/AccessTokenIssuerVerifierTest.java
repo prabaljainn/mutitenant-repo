@@ -68,13 +68,13 @@ class AccessTokenIssuerVerifierTest {
     @Test
     void tenant_user_token_round_trips() {
         var issued = issuer.issue("tu-1", "bob@acme.example", UserKind.TENANT_USER,
-                null, "acme", TenantRole.TENANT_OWNER, 7);
+                null, "acme", TenantRole.ADMIN, 7);
 
         var verified = verifier.verify(issued.token());
 
         assertThat(verified.kind()).isEqualTo(UserKind.TENANT_USER);
         assertThat(verified.activeTenantId()).isEqualTo("acme");
-        assertThat(verified.tenantRole()).isEqualTo(TenantRole.TENANT_OWNER);
+        assertThat(verified.tenantRole()).isEqualTo(TenantRole.ADMIN);
         assertThat(verified.operatorRole()).isNull();
         assertThat(verified.tokenVersion()).isEqualTo(7);
     }

@@ -25,10 +25,10 @@ class UserTest {
     @Test
     void tenant_user_factory_creates_a_valid_tenant_user() {
         var u = User.newTenantUser("u2", "bob@acme.example", "hash",
-                "Bob", "Doe", "acme", TenantRole.TENANT_OWNER);
+                "Bob", "Doe", "acme", TenantRole.ADMIN);
         assertThat(u.kind()).isEqualTo(UserKind.TENANT_USER);
         assertThat(u.tenantId()).isEqualTo("acme");
-        assertThat(u.tenantRole()).isEqualTo(TenantRole.TENANT_OWNER);
+        assertThat(u.tenantRole()).isEqualTo(TenantRole.ADMIN);
         assertThat(u.operatorRole()).isNull();
     }
 

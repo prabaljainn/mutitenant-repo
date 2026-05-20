@@ -24,6 +24,7 @@ import com.orochiverse.platform.common.audit.AuditEntry;
 import com.orochiverse.platform.common.audit.AuditEntryRepository;
 import com.orochiverse.platform.common.security.jwt.AccessTokenIssuer;
 import com.orochiverse.platform.common.security.passwords.PasswordHashing;
+import com.orochiverse.platform.common.security.principals.OperatorRole;
 import com.orochiverse.platform.iam.users.UserRepository;
 import com.orochiverse.platform.testsupport.IT;
 import com.orochiverse.platform.testsupport.IamFixtures;
@@ -49,6 +50,8 @@ class AuditAdminControllerIT {
     private String suffix;
     private String adminId;
     private String adminToken;
+    private String supportId;
+    private String supportToken;
 
     @BeforeEach
     void setUp() {
@@ -56,6 +59,14 @@ class AuditAdminControllerIT {
         var admin = IamFixtures.operator(suffix).save(users, passwords);
         adminId = admin.id();
         adminToken = JwtTestSupport.token(issuer, admin);
+
+        var support = IamFixtures.operator(suffix)
+                .id("supp-" + suffix)
+                .email("supp-" + suffix + "@orochi.example")
+                .role(OperatorRole.OPERATOR_SUPPORT)
+                .save(users, passwords);
+        supportId = support.id();
+        supportToken = JwtTestSupport.token(issuer, support);
 
         // Seed a small set of audit rows we can query for.
         audit.save(AuditEntry.of(AuditAction.LOGIN_SUCCESS, adminId));
@@ -66,6 +77,7 @@ class AuditAdminControllerIT {
     @AfterEach
     void cleanup() {
         users.deleteById(adminId);
+        users.deleteById(supportId);
         audit.findAllByActorUserIdOrderByTimestampDesc(adminId,
                 org.springframework.data.domain.PageRequest.of(0, 200))
                 .forEach(e -> audit.deleteById(e.id()));
@@ -102,5 +114,56 @@ class AuditAdminControllerIT {
     void requires_authentication() {
         var resp = new TestRestTemplate().getForEntity(IT.url(port, "/admin/api/audit"), Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    void support_role_is_forbidden() {
+        // Audit is admin-only for now — a scoped SUPPORT view is a follow-up.
+        var resp = IT.exchange(port, "/admin/api/audit",
+                HttpMethod.GET, supportToken, null, List.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void filter_by_action_returns_only_matching_rows() {
+        // setUp seeded one OPERATOR_INVITED row plus one LOGIN_SUCCESS.
+        var resp = IT.exchange(port, "/admin/api/audit?action=OPERATOR_INVITED",
+                HttpMethod.GET, adminToken, null, List.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        var rows = resp.getBody();
+        assertThat(rows).isNotEmpty();
+        rows.forEach(r -> {
+            var entry = (Map<String, Object>) r;
+            assertThat(entry).containsEntry("action", "OPERATOR_INVITED");
+        });
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void filter_by_date_range_excludes_rows_outside_window() {
+        // Seed an entry stamped well in the past so we can prove the
+        // since filter excludes it.
+        var oldEntry = new AuditEntry(null,
+                java.time.Instant.parse("2020-01-01T00:00:00Z"),
+                adminId, AuditAction.LOGIN_SUCCESS, null, null, null,
+                Map.of(), null, null);
+        audit.save(oldEntry);
+
+        // Window starts in 2025 — should miss the 2020 row but include the
+        // ones the @BeforeEach just saved.
+        var resp = IT.exchange(port,
+                "/admin/api/audit?since=2025-01-01T00:00:00Z",
+                HttpMethod.GET, adminToken, null, List.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        var rows = resp.getBody();
+        rows.forEach(r -> {
+            var entry = (Map<String, Object>) r;
+            var ts = entry.get("timestamp").toString();
+            // ISO timestamps sort lexically when they share the format.
+            assertThat(ts.compareTo("2025-01-01T00:00:00Z") >= 0).isTrue();
+        });
     }
 }

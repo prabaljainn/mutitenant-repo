@@ -32,8 +32,8 @@ import com.mongodb.client.MongoClient;
  * soft-delete here — soft-deletion belongs to the {@code tenants}
  * collection in {@code iam_db}; the operational database itself is
  * either present or it isn't. Caller code (tenant lifecycle service) is
- * responsible for ensuring the tenant is marked {@code ARCHIVED} before
- * calling this.
+ * responsible for stamping {@code deletedAt} on the tenant document
+ * before calling this.
  */
 public final class TenantDatabaseProvisioner {
 

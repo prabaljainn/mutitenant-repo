@@ -83,7 +83,7 @@ class AuthFlowIT {
     @SuppressWarnings("unchecked")
     void me_returns_the_tenant_user_principal_and_binds_tenant_context() {
         var token = issuer.issue("tu-1", "alice@acme.example", UserKind.TENANT_USER,
-                null, "acme", TenantRole.TENANT_OWNER, 0).token();
+                null, "acme", TenantRole.ADMIN, 0).token();
 
         var response = exchange("/api/auth/me", token, Map.class);
 
@@ -91,7 +91,7 @@ class AuthFlowIT {
         Map<String, Object> body = response.getBody();
         assertThat(body).containsEntry("kind", "TENANT_USER");
         assertThat(body).containsEntry("activeTenantId", "acme");
-        assertThat(body).containsEntry("tenantRole", "TENANT_OWNER");
+        assertThat(body).containsEntry("tenantRole", "ADMIN");
         assertThat(body).containsEntry("tenantContextBound", true);
     }
 
@@ -153,7 +153,7 @@ class AuthFlowIT {
     @Test
     void operator_admin_only_endpoint_returns_403_for_tenant_user() {
         var token = issuer.issue("tu-1", "alice@acme.example", UserKind.TENANT_USER,
-                null, "acme", TenantRole.TENANT_OWNER, 0).token();
+                null, "acme", TenantRole.ADMIN, 0).token();
 
         var response = exchange("/test/admin-only", token, Map.class);
 

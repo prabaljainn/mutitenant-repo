@@ -26,8 +26,7 @@ import com.orochiverse.platform.common.security.principals.UserKind;
  *       from tenant self-service without naming every role.</li>
  *   <li>A <b>role</b> authority — {@code ROLE_OPERATOR_ADMIN} /
  *       {@code ROLE_OPERATOR_SUPPORT} for operators, or
- *       {@code ROLE_TENANT_OWNER} / {@code _ADMIN} / {@code _EDITOR} /
- *       {@code _VIEWER} for tenant users.</li>
+ *       {@code ROLE_ADMIN} / {@code ROLE_MEMBER} for tenant users.</li>
  * </ul>
  *
  * <p>Tenant context (the {@code tid} claim) is <em>not</em> encoded in

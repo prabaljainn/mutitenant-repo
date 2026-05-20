@@ -76,7 +76,7 @@ public class OperatorAssignmentsAdminService {
                     + " is already assigned to tenant " + tenantId);
         }
 
-        audit.save(AuditEntry.of(AuditAction.OPERATOR_ASSIGNMENT_GRANTED, actorUserId,
+        audit.save(AuditEntry.of(AuditAction.OPERATOR_ASSIGNMENT_GRANTED, actorUserId, tenantId,
                 Map.of("operatorId", operatorUserId, "tenantId", tenantId)));
         log.info("operator assignment granted operator={} tenant={} actor={}",
                 operatorUserId, tenantId, actorUserId);
@@ -97,7 +97,7 @@ public class OperatorAssignmentsAdminService {
             throw new NotFoundException("no assignment for operator " + operatorUserId
                     + " in tenant " + tenantId);
         }
-        audit.save(AuditEntry.of(AuditAction.OPERATOR_ASSIGNMENT_REVOKED, actorUserId,
+        audit.save(AuditEntry.of(AuditAction.OPERATOR_ASSIGNMENT_REVOKED, actorUserId, tenantId,
                 Map.of("operatorId", operatorUserId, "tenantId", tenantId)));
         log.info("operator assignment revoked operator={} tenant={} actor={}",
                 operatorUserId, tenantId, actorUserId);

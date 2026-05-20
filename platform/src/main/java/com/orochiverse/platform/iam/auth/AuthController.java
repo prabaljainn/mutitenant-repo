@@ -60,7 +60,7 @@ public class AuthController {
 
     @PostMapping("/login")
     public TokenResponse login(@Valid @RequestBody LoginRequest req, HttpServletRequest http) {
-        return auth.login(req.email(), req.password(), clientIp(http));
+        return auth.login(req.email(), req.password(), clientIp(http), userAgent(http));
     }
 
     /**
@@ -78,9 +78,14 @@ public class AuthController {
         return req.getRemoteAddr();
     }
 
+    /** Raw User-Agent header, used to label sessions in the Account UI. */
+    private static String userAgent(HttpServletRequest req) {
+        return req.getHeader("User-Agent");
+    }
+
     @PostMapping("/refresh")
-    public TokenResponse refresh(@Valid @RequestBody RefreshRequest req) {
-        return auth.refresh(req.refreshToken());
+    public TokenResponse refresh(@Valid @RequestBody RefreshRequest req, HttpServletRequest http) {
+        return auth.refresh(req.refreshToken(), clientIp(http), userAgent(http));
     }
 
     /**
@@ -110,7 +115,7 @@ public class AuthController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "unsupported_grant_type: only 'password' is accepted here");
         }
-        TokenResponse t = auth.login(username, password, clientIp(http));
+        TokenResponse t = auth.login(username, password, clientIp(http), userAgent(http));
         return OAuthTokenResponse.from(t);
     }
 
@@ -161,7 +166,8 @@ public class AuthController {
      * user lands logged in.
      */
     @PostMapping("/accept-invite")
-    public TokenResponse acceptInvite(@Valid @RequestBody AcceptInviteRequest req) {
-        return auth.acceptInvite(req.token(), req.newPassword());
+    public TokenResponse acceptInvite(@Valid @RequestBody AcceptInviteRequest req,
+                                      HttpServletRequest http) {
+        return auth.acceptInvite(req.token(), req.newPassword(), clientIp(http), userAgent(http));
     }
 }

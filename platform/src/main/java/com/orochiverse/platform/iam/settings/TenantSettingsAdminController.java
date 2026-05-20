@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.orochiverse.platform.common.security.auth.AuthenticatedUser;
+import com.orochiverse.platform.iam.admin.common.OperatorVisibility;
 import com.orochiverse.platform.iam.settings.SettingsKindHandler.TestResult;
 import com.orochiverse.platform.iam.settings.TenantSettingsDtos.SettingsListResponse;
 import com.orochiverse.platform.iam.settings.TenantSettingsDtos.SettingsResponse;
@@ -55,20 +56,25 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 public class TenantSettingsAdminController {
 
     private final TenantSettingsService service;
+    private final OperatorVisibility visibility;
 
-    public TenantSettingsAdminController(TenantSettingsService service) {
+    public TenantSettingsAdminController(TenantSettingsService service,
+                                         OperatorVisibility visibility) {
         this.service = service;
+        this.visibility = visibility;
     }
 
     @GetMapping
     @PreAuthorize("hasRole('OPERATOR')")
     public SettingsListResponse list(@PathVariable String tenantId) {
+        visibility.requireVisibility(tenantId);
         return new SettingsListResponse(service.list(tenantId));
     }
 
     @GetMapping("/{kind}")
     @PreAuthorize("hasRole('OPERATOR')")
     public SettingsResponse get(@PathVariable String tenantId, @PathVariable SettingsKind kind) {
+        visibility.requireVisibility(tenantId);
         return service.get(tenantId, kind);
     }
 

@@ -15,31 +15,19 @@ import com.orochiverse.platform.iam.users.UserStatus;
 
 /**
  * Fluent builders for the {@link User} / {@link Tenant} fixtures every IT
- * needs at {@code @BeforeEach}. Replaces the old per-test 10-line
- * {@code new User(id, email, passwords.hash(pw), …)} incantations and the
- * one-arg {@code AdminItSupport.seedOperator} helper that hardcoded
- * {@code OPERATOR_ADMIN} + {@code "Op"/"Admin"} names.
- *
- * <h2>Why fluent?</h2>
- * The {@link User} record has 14 fields with non-trivial invariants
- * (operatorRole vs tenantId/tenantRole are mutually exclusive). A builder
- * lets each test override only what matters and lets us evolve the record
- * shape without rewriting every test.
+ * needs at {@code @BeforeEach}.
  *
  * <h2>Naming convention</h2>
  * IDs and emails are derived from the {@code suffix} parameter so two
  * concurrent test runs hitting the same dev Mongo won't collide. Tests
- * are responsible for cleanup via the returned {@link User#id()} — the
- * fixtures don't track what they created.
+ * are responsible for cleanup via the returned {@link User#id()}.
  */
 public final class IamFixtures {
 
-    /** The default password every fixture uses unless overridden. */
     public static final String DEFAULT_PASSWORD = "Sup3rSecret!";
 
     private IamFixtures() {}
 
-    /** Random 8-char suffix for namespacing test data within a single run. */
     public static String randomSuffix() {
         return UUID.randomUUID().toString().substring(0, 8);
     }
@@ -83,7 +71,6 @@ public final class IamFixtures {
         public OperatorBuilder lastName(String v) { this.lastName = v; return this; }
         public OperatorBuilder role(OperatorRole v) { this.role = v; return this; }
         public OperatorBuilder status(UserStatus v) { this.status = v; return this; }
-        /** For invite-style fixtures with no password yet. */
         public OperatorBuilder noPassword() { this.password = null; return this; }
 
         public User save(UserRepository users, PasswordHashing passwords) {
@@ -95,7 +82,6 @@ public final class IamFixtures {
             return u;
         }
 
-        /** Build without persisting — useful for unit tests and JWT minting. */
         public User build() {
             var now = Instant.now();
             return new User(id, email, password == null ? null : password,
@@ -103,7 +89,6 @@ public final class IamFixtures {
                     null, null, 0, null, now, now);
         }
 
-        /** Convenience for callers that only want the suffix. */
         public String suffix() { return suffix; }
     }
 
@@ -119,7 +104,7 @@ public final class IamFixtures {
         private String password = DEFAULT_PASSWORD;
         private String firstName = "Tenant";
         private String lastName = "User";
-        private TenantRole role = TenantRole.TENANT_OWNER;
+        private TenantRole role = TenantRole.ADMIN;
         private UserStatus status = UserStatus.ACTIVE;
 
         TenantUserBuilder(String suffix, String tenantId) {
@@ -165,8 +150,8 @@ public final class IamFixtures {
     public static final class TenantBuilder {
         private String id;
         private String name;
-        private String plan = "STARTER";
         private String createdBy = "system";
+        private String ownerUserId;
 
         TenantBuilder(String idPrefix, String suffix) {
             this.id = idPrefix + suffix;
@@ -175,11 +160,14 @@ public final class IamFixtures {
 
         public TenantBuilder id(String v) { this.id = v; return this; }
         public TenantBuilder name(String v) { this.name = v; return this; }
-        public TenantBuilder plan(String v) { this.plan = v; return this; }
         public TenantBuilder createdBy(String v) { this.createdBy = v; return this; }
+        public TenantBuilder ownerUserId(String v) { this.ownerUserId = v; return this; }
 
         public Tenant save(TenantRepository tenants) {
-            var t = Tenant.newTrial(id, name, plan, createdBy);
+            var t = Tenant.create(id, name, createdBy);
+            if (ownerUserId != null) {
+                t = t.withOwner(ownerUserId);
+            }
             tenants.save(t);
             return t;
         }

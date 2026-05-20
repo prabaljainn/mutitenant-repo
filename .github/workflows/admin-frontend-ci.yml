@@ -1,0 +1,70 @@
+name: admin-frontend-ci
+
+# CI for the CloudGCS admin console. Runs on every push + PR that touches
+# the frontend or this workflow itself. Pure docs / backend-only changes
+# are skipped via paths-ignore so the JVM CI doesn't blow up the queue.
+#
+# Pipeline:
+#   1. Install (npm ci, cache-aware)
+#   2. Typecheck (tsc --noEmit) — fast, catches the most common breakage
+#   3. Lint (next lint)
+#   4. Build (next build) — validates the prod bundle compiles
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/admin/**'
+      - '.github/workflows/admin-frontend-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/admin/**'
+      - '.github/workflows/admin-frontend-ci.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: typecheck + lint + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: frontend/admin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/admin/package-lock.json
+
+      - name: install
+        run: npm ci --no-audit --no-fund
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: lint
+        run: npm run lint -- --max-warnings 0
+
+      - name: build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+
+      - name: upload standalone bundle (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-frontend-next-output
+          path: |
+            frontend/admin/.next/
+          retention-days: 5
+          if-no-files-found: ignore
