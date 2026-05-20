@@ -450,7 +450,7 @@ function AssignmentsCard({
  * <p>No "this device" marker here — admin viewing someone else's
  * sessions has no way to identify which is theirs. The self-service
  * Sessions UI on /account does have the marker because the current
- * refresh token is in sessionStorage.
+ * refresh token is in localStorage.
  */
 function SessionsCard({ operatorId }: { operatorId: string }) {
   const qc = useQueryClient();

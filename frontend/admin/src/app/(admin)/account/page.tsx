@@ -243,10 +243,11 @@ function SessionsCard() {
     refetchInterval: 60_000,
   });
 
-  // Compute the current session's id once at mount by hashing the refresh
-  // token in sessionStorage. The raw token never leaves this component.
+  // Compute the current session's id once at mount by hashing the
+  // refresh token in localStorage. The raw token never leaves this
+  // component — only the derived 16-hex SHA-256 prefix is used.
   useEffect(() => {
-    const rt = typeof window === "undefined" ? null : sessionStorage.getItem("cloudgcs.refresh");
+    const rt = typeof window === "undefined" ? null : window.localStorage.getItem("cloudgcs.refresh");
     void deriveSessionId(rt).then(setCurrentId);
   }, []);
 

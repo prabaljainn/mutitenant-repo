@@ -7,7 +7,7 @@ export type PageLoaderProps = {
 
 /**
  * Full-viewport branded loader. Used while the auth provider rehydrates
- * from sessionStorage so a real-page refresh shows something on-brand
+ * from localStorage so a real-page refresh shows something on-brand
  * instead of a blank white screen. Matches the auth-shell visuals:
  * the same logo block, the same accent colour, the same font.
  */

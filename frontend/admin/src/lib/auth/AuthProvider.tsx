@@ -13,13 +13,14 @@ import {
 import { useRouter } from "next/navigation";
 
 import { type AccessClaims, decodeJwt, isExpired, isSuperAdmin } from "./jwt";
+import { ACCESS_KEY, clearTokens, readTokens, writeTokens } from "./tokenStorage";
 
 type AuthState = {
   accessToken: string | null;
   claims: AccessClaims | null;
   /**
    * "hydrating" is the transient state between mount and the
-   * sessionStorage-rehydration effect running. Without it, every full
+   * storage-rehydration effect running. Without it, every full
    * page refresh on an authenticated route briefly reports "anonymous"
    * (effect hasn't fired yet), the admin layout redirects to /login,
    * THEN hydration flips status to "authenticated", and the login page
@@ -44,9 +45,6 @@ type AuthCtx = AuthState & {
 
 const Ctx = createContext<AuthCtx | null>(null);
 
-const ACCESS_KEY = "cloudgcs.access";
-const REFRESH_KEY = "cloudgcs.refresh";
-
 // Orochiverse Spring login response shape: { accessToken, refreshToken, expiresIn, tokenType }.
 type LoginResponse = {
   accessToken: string;
@@ -59,8 +57,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [accessToken, setAccessToken] = useState<string | null>(null);
   // Start in "hydrating" — flipped to anonymous/authenticated by the
-  // sessionStorage rehydration effect below. Keeps the admin layout
-  // from prematurely redirecting to /login on a real-page refresh.
+  // storage rehydration effect below. Keeps the admin layout from
+  // prematurely redirecting to /login on a real-page refresh.
   const [status, setStatus] = useState<AuthState["status"]>("hydrating");
 
   // Refresh is kept out of React state — it's only ever read inside the
@@ -68,25 +66,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // dependency graph and avoids accidental re-renders on rotation.
   const refreshTokenRef = useRef<string | null>(null);
 
-  // Hydrate from sessionStorage once at mount. sessionStorage (not localStorage)
-  // is deliberate — a closed tab logs the user out, matching the "in-memory"
-  // policy from the design brief while still surviving page reloads during a
-  // working session. The refresh token still gets sent to the backend on every
-  // refresh call, so a stolen sessionStorage value rotates within ~15 min.
+  // Hydrate from localStorage once at mount. See lib/auth/tokenStorage.ts
+  // for the localStorage-vs-sessionStorage trade-off.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const at = sessionStorage.getItem(ACCESS_KEY);
-    const rt = sessionStorage.getItem(REFRESH_KEY);
-    if (at) {
-      const claims = decodeJwt(at);
+    const { access, refresh } = readTokens();
+    if (access) {
+      const claims = decodeJwt(access);
       if (claims && !isExpired(claims)) {
-        setAccessToken(at);
-        refreshTokenRef.current = rt;
+        setAccessToken(access);
+        refreshTokenRef.current = refresh;
         setStatus("authenticated");
         return;
       }
-      sessionStorage.removeItem(ACCESS_KEY);
-      sessionStorage.removeItem(REFRESH_KEY);
+      clearTokens();
     }
     setStatus("anonymous");
   }, []);
@@ -94,8 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const claims = useMemo<AccessClaims | null>(() => (accessToken ? decodeJwt(accessToken) : null), [accessToken]);
 
   const persistTokens = useCallback((at: string, rt: string) => {
-    sessionStorage.setItem(ACCESS_KEY, at);
-    sessionStorage.setItem(REFRESH_KEY, rt);
+    writeTokens(at, rt);
     refreshTokenRef.current = rt;
     setAccessToken(at);
   }, []);
@@ -167,13 +159,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // sees an immediate logout even if the platform is unreachable.
       }
     }
-    sessionStorage.removeItem(ACCESS_KEY);
-    sessionStorage.removeItem(REFRESH_KEY);
+    clearTokens();
     refreshTokenRef.current = null;
     setAccessToken(null);
     setStatus("anonymous");
     router.replace("/login");
   }, [router]);
+
+  // Cross-tab sync. With tokens in localStorage, two tabs share auth
+  // state — but each tab keeps its own in-memory copy of the access
+  // token and refresh-token ref. Without this listener, signing out
+  // in tab A would leave tab B happily issuing requests with a token
+  // the server has already revoked, and a refresh-rotation in tab A
+  // (every ~15 min) would leave tab B holding the old refresh token,
+  // 401-ing on next refresh, and forcibly logging out.
+  //
+  // The `storage` event fires only in OTHER tabs (not the one that
+  // wrote), so we don't recurse.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    function onStorage(e: StorageEvent) {
+      if (e.key !== ACCESS_KEY && e.key !== null) return;
+      // newValue==null when the other tab signed out (or storage was
+      // cleared). Mirror that here.
+      if (!e.newValue) {
+        refreshTokenRef.current = null;
+        setAccessToken(null);
+        setStatus("anonymous");
+        return;
+      }
+      // newValue==access token from a sign-in or rotation in another
+      // tab. Sync our in-memory copies so subsequent refresh calls use
+      // the latest refresh token.
+      const { access, refresh } = readTokens();
+      if (access) {
+        const claims = decodeJwt(access);
+        if (claims && !isExpired(claims)) {
+          setAccessToken(access);
+          refreshTokenRef.current = refresh;
+          setStatus("authenticated");
+        }
+      }
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   // De-duplicate concurrent refresh calls. When the dashboard loads it fires
   // 3+ queries in parallel; each one that 401s would otherwise call /refresh

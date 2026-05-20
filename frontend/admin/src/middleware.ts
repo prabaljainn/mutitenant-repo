@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 //   - `/`        → `/overview` (the admin layout takes over from there and
 //                  bounces anon visitors to /login client-side)
 //
-// Note we do NOT enforce auth here — the access token lives in sessionStorage,
+// Note we do NOT enforce auth here — the access token lives in localStorage,
 // which the middleware can't read. Server-side auth would require a refresh
 // cookie set by a Next route handler; that's a follow-up. The /admin layout's
 // useAuth() check is what protects every screen for now.

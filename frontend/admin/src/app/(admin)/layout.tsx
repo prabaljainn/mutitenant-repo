@@ -12,7 +12,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  // Client-side gate: the middleware can't reach sessionStorage (where
+  // Client-side gate: the middleware can't reach localStorage (where
   // the access token lives) so this is the actual auth check. Wait for
   // "hydrating" to settle — without that, a full-page refresh on any
   // authenticated route would briefly read status="anonymous" (before
