@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 
 import { Icon } from "@/components/icons/Icon";
 import { Icons } from "@/components/icons/icons";
+import { Spinner } from "@/components/ui/Spinner";
 import { NotImplementedError } from "@/lib/api/types";
 
 /** Renders a friendly, copy-able "backend endpoint not yet implemented" message
@@ -21,7 +22,23 @@ export function BackendStatus({
   fallbackLabel?: string;
 }) {
   if (isLoading) {
-    return <div className="muted" style={{ padding: 12, fontSize: 13 }}>{fallbackLabel}</div>;
+    return (
+      <div
+        className="muted backend-status-loading"
+        role="status"
+        aria-live="polite"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: 16,
+          fontSize: 13,
+        }}
+      >
+        <Spinner size={14} />
+        <span>{fallbackLabel}</span>
+      </div>
+    );
   }
   if (error instanceof NotImplementedError) {
     return (

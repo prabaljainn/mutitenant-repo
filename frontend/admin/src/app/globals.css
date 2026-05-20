@@ -1159,6 +1159,79 @@ button { font-family: inherit; }
   50%      { box-shadow: 0 0 0 6px transparent; }
 }
 
+/* ---------- SPINNER + PAGE LOADER ---------- */
+/* Visually-hidden but available to screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* CSS-only spinner: a conic-gradient ring that fades to transparent at
+   one end, masked to a thin annulus so the spin reads as a chasing
+   arc rather than a solid disc. Inherits `color` so any caller can
+   set its own tint via parent color or the `color` prop. */
+.spinner {
+  display: inline-block;
+  flex-shrink: 0;
+  border-radius: 50%;
+  position: relative;
+  color: var(--accent);
+}
+.spinner::before {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    currentColor 0deg,
+    color-mix(in oklab, currentColor 30%, transparent) 200deg,
+    transparent 300deg
+  );
+  /* Mask out the center to leave a 2px ring — matches the visual
+     weight of the other small UI strokes. */
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+          mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  animation: spinnerSpin 0.8s linear infinite;
+}
+@keyframes spinnerSpin { to { transform: rotate(360deg); } }
+
+/* Full-viewport branded loader for the hydration period. Centred
+   logo + spinner + label, matching the auth-shell vibe. */
+.page-loader {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 18px;
+  background: var(--bg);
+  color: var(--fg);
+  z-index: 100;
+}
+.page-loader-mark .sb-logo {
+  width: 40px; height: 40px;
+  border-radius: 9px;
+  font-size: 16px;
+}
+.page-loader-label {
+  font-size: 13px;
+  color: var(--fg-3);
+  letter-spacing: 0.01em;
+}
+
+/* Inline backend-loading row used by BackendStatus. Subtle, doesn't
+   shout — pairs the small spinner with muted copy. */
+.backend-status-loading { color: var(--fg-3); }
+.backend-status-loading .spinner { color: var(--accent); }
+
+/* Respect reduced-motion preferences. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner::before { animation-duration: 2.4s; }
+}
+
 /* Page-title with inline edit button — keep button inline */
 .page-title button.btn { display: inline-flex; }
 

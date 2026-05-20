@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 
 import { AdminShell } from "@/components/shell/AdminShell";
+import { PageLoader } from "@/components/ui/PageLoader";
 import { useAuth } from "@/lib/auth/AuthProvider";
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
@@ -28,6 +29,14 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     router.replace(target);
   }, [status, pathname, router]);
 
+  if (status === "hydrating") {
+    return <PageLoader />;
+  }
+  if (status === "anonymous") {
+    // The effect above is about to redirect; render a quiet loader
+    // instead of a blank screen so the transition doesn't flash white.
+    return <PageLoader label="Redirecting to sign in…" />;
+  }
   if (status !== "authenticated") return null;
   return <AdminShell>{children}</AdminShell>;
 }
