@@ -13,6 +13,7 @@ import { PasswordInput } from "@/components/ui/PasswordInput";
 import { deriveSessionId, meApi } from "@/lib/api/me";
 import type { Session } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { useConfirm } from "@/lib/confirm/ConfirmProvider";
 import { useToast } from "@/lib/toast/ToastProvider";
 import { formatGB, formatRelative, formatTime } from "@/lib/utils/date";
 import { describeUserAgent } from "@/lib/utils/userAgent";
@@ -231,6 +232,7 @@ function PasswordCard() {
 function SessionsCard() {
   const qc = useQueryClient();
   const { notify } = useToast();
+  const confirm = useConfirm();
   const [currentId, setCurrentId] = useState<string | null>(null);
 
   const sessions = useQuery({
@@ -276,25 +278,31 @@ function SessionsCard() {
     },
   });
 
-  function onRevoke(id: string) {
+  async function onRevoke(id: string) {
     if (id === currentId) {
-      const ok = window.confirm(
-        "This is the session you're using right now. Revoking it will sign you out of this tab. Continue?",
-      );
+      const ok = await confirm({
+        title: "Sign out of this tab?",
+        body: "This is the session you're using right now — revoking it will sign you out immediately.",
+        confirmLabel: "Sign out",
+        tone: "danger",
+      });
       if (!ok) return;
     }
     revoke.mutate(id);
   }
 
-  function onRevokeOthers() {
+  async function onRevokeOthers() {
     const others = (sessions.data ?? []).filter((s) => s.id !== currentId).length;
     if (others === 0) {
       notify("No other sessions to sign out.", "info");
       return;
     }
-    const ok = window.confirm(
-      `Sign out of ${others} other ${others === 1 ? "session" : "sessions"}? They'll be signed out within the next 15 minutes.`,
-    );
+    const ok = await confirm({
+      title: `Sign out of ${others} other ${others === 1 ? "device" : "devices"}?`,
+      body: "They'll be signed out within the next 15 minutes. This device stays signed in.",
+      confirmLabel: "Sign out everywhere else",
+      tone: "danger",
+    });
     if (!ok) return;
     revokeOthers.mutate();
   }

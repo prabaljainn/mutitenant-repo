@@ -7,6 +7,7 @@ import { Icons } from "@/components/icons/icons";
 import { Chip } from "@/components/ui/Chip";
 import { settingsApi } from "@/lib/api/settings";
 import { type DjiSettings } from "@/lib/api/types";
+import { useConfirm } from "@/lib/confirm/ConfirmProvider";
 import { useToast } from "@/lib/toast/ToastProvider";
 
 const DEFAULTS: DjiSettings = {
@@ -32,6 +33,7 @@ export function DjiForm({
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const { notify } = useToast();
+  const confirm = useConfirm();
 
   useEffect(() => {
     if (initial) {
@@ -86,9 +88,13 @@ export function DjiForm({
   }
 
   async function clear() {
-    if (!window.confirm("Clear DJI settings? Drone integration won't function until you reconfigure.")) {
-      return;
-    }
+    const ok = await confirm({
+      title: "Clear DJI settings?",
+      body: "Drone integration won't function until you reconfigure this tenant's DJI endpoint.",
+      confirmLabel: "Clear settings",
+      tone: "danger",
+    });
+    if (!ok) return;
     setSaving(true);
     try {
       await settingsApi.dji.clear(tenantId);

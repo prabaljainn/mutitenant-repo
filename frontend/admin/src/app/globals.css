@@ -382,6 +382,16 @@ button { font-family: inherit; }
 .btn-ghost:hover { background: var(--bg-3); color: var(--fg); }
 .btn-icon { width: 32px; padding: 0; justify-content: center; }
 .btn-danger { color: var(--bad); }
+.btn-danger-solid {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+}
+.btn-danger-solid:hover {
+  background: color-mix(in oklab, var(--bad) 88%, black);
+  border-color: color-mix(in oklab, var(--bad) 88%, black);
+  color: #fff;
+}
 .btn-sm { height: 26px; padding: 0 8px; font-size: 12px; }
 .app-shell[data-density="dense"] .btn { height: 28px; font-size: 12px; }
 .app-shell[data-density="spacious"] .btn { height: 36px; padding: 0 14px; }
@@ -1077,6 +1087,22 @@ button { font-family: inherit; }
   display: flex; gap: 8px; justify-content: flex-end;
   padding-top: 6px;
   margin-top: 4px;
+}
+
+/* ---------- CONFIRM DIALOG ---------- */
+.confirm-modal { width: 440px; }
+.confirm-modal .modal-head { align-items: center; }
+.confirm-modal-icon {
+  width: 36px; height: 36px;
+  border-radius: 999px;
+  display: grid; place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.confirm-modal-icon--danger {
+  background: color-mix(in oklab, var(--bad) 14%, transparent);
+  color: var(--bad);
 }
 
 @keyframes modalIn { from { opacity: 0; } to { opacity: 1; } }

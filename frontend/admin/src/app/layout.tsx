@@ -6,6 +6,7 @@ import "./globals.css";
 
 import { AuthBridge } from "@/lib/auth/AuthBridge";
 import { AuthProvider } from "@/lib/auth/AuthProvider";
+import { ConfirmProvider } from "@/lib/confirm/ConfirmProvider";
 import { QueryProvider } from "@/lib/query/QueryProvider";
 import { ThemeProvider } from "@/lib/theme/ThemeProvider";
 import { ToastProvider } from "@/lib/toast/ToastProvider";
@@ -36,13 +37,15 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <QueryProvider>
             <AuthProvider>
               <ToastProvider>
-                {/* AuthBridge wires the api/client to both AuthProvider
-                    (token refresh) and ToastProvider (unreachable toast),
-                    so it MUST sit inside both. Reorder with care. */}
-                <AuthBridge>
-                  {children}
-                  {tweaksEnabled && <TweaksPanel />}
-                </AuthBridge>
+                <ConfirmProvider>
+                  {/* AuthBridge wires the api/client to both AuthProvider
+                      (token refresh) and ToastProvider (unreachable toast),
+                      so it MUST sit inside both. Reorder with care. */}
+                  <AuthBridge>
+                    {children}
+                    {tweaksEnabled && <TweaksPanel />}
+                  </AuthBridge>
+                </ConfirmProvider>
               </ToastProvider>
             </AuthProvider>
           </QueryProvider>

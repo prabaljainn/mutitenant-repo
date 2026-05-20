@@ -7,6 +7,7 @@ import { Icons } from "@/components/icons/icons";
 import { Chip } from "@/components/ui/Chip";
 import { settingsApi } from "@/lib/api/settings";
 import { type MqttSettings } from "@/lib/api/types";
+import { useConfirm } from "@/lib/confirm/ConfirmProvider";
 import { useToast } from "@/lib/toast/ToastProvider";
 
 const DEFAULTS: MqttSettings = {
@@ -33,6 +34,7 @@ export function MqttForm({
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const { notify } = useToast();
+  const confirm = useConfirm();
 
   useEffect(() => {
     if (initial) {
@@ -91,9 +93,13 @@ export function MqttForm({
   }
 
   async function clear() {
-    if (!window.confirm("Clear MQTT settings? Drones won't be able to publish until you reconfigure.")) {
-      return;
-    }
+    const ok = await confirm({
+      title: "Clear MQTT settings?",
+      body: "Drones won't be able to publish telemetry until you reconfigure this tenant.",
+      confirmLabel: "Clear settings",
+      tone: "danger",
+    });
+    if (!ok) return;
     setSaving(true);
     try {
       await settingsApi.mqtt.clear(tenantId);

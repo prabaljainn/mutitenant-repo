@@ -18,6 +18,7 @@ import { tenantsApi } from "@/lib/api/tenants";
 import type { Operator, OperatorRole, OperatorStatus } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { isOperatorAdmin } from "@/lib/auth/jwt";
+import { useConfirm } from "@/lib/confirm/ConfirmProvider";
 import { useToast } from "@/lib/toast/ToastProvider";
 import { formatGB, formatTime } from "@/lib/utils/date";
 
@@ -39,6 +40,7 @@ function statusChip(status: OperatorStatus) {
 export function OperatorDetail({ operatorId }: { operatorId: string }) {
   const qc = useQueryClient();
   const { notify } = useToast();
+  const confirm = useConfirm();
   const { claims } = useAuth();
   const isSelf = claims?.sub === operatorId;
   // SUPPORT can view but not mutate. Backend already 403s these calls;
@@ -88,8 +90,14 @@ export function OperatorDetail({ operatorId }: { operatorId: string }) {
     },
   });
 
-  function confirmDelete() {
-    if (!window.confirm("Soft-delete this operator? Their access is revoked but audit history is preserved.")) return;
+  async function confirmDelete() {
+    const ok = await confirm({
+      title: "Soft-delete this operator?",
+      body: "Their access is revoked, but the audit history is preserved. You can restore them later by re-inviting.",
+      confirmLabel: "Delete operator",
+      tone: "danger",
+    });
+    if (!ok) return;
     remove.mutate();
   }
 

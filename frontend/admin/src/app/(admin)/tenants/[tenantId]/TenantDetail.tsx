@@ -20,6 +20,7 @@ import { membersApi, tenantsApi } from "@/lib/api/tenants";
 import { type Member, type MemberRole, type MemberStatus, type Tenant } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { isOperatorAdmin } from "@/lib/auth/jwt";
+import { useConfirm } from "@/lib/confirm/ConfirmProvider";
 import { useToast } from "@/lib/toast/ToastProvider";
 import { formatGB } from "@/lib/utils/date";
 
@@ -44,6 +45,7 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
   const qc = useQueryClient();
   const router = useRouter();
   const { notify } = useToast();
+  const confirm = useConfirm();
   const { claims } = useAuth();
   const canManage = isOperatorAdmin(claims);
   const tenant = useQuery({ queryKey: ["tenants", tenantId], queryFn: () => tenantsApi.get(tenantId) });
@@ -95,13 +97,14 @@ export function TenantDetail({ tenantId }: { tenantId: string }) {
     },
   });
 
-  function confirmDelete(name: string) {
-    if (
-      !window.confirm(
-        `Soft-delete tenant "${name}"?\n\nThe per-tenant database is dropped immediately. ` +
-          `The tenant document is kept (with deletedAt stamped) so audit history survives.`,
-      )
-    ) return;
+  async function confirmDelete(name: string) {
+    const ok = await confirm({
+      title: `Soft-delete tenant "${name}"?`,
+      body: "The per-tenant database is dropped immediately. The tenant document is kept (with deletedAt stamped) so audit history survives.",
+      confirmLabel: "Delete tenant",
+      tone: "danger",
+    });
+    if (!ok) return;
     remove.mutate();
   }
 
