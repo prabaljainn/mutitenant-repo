@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { AuthRadar } from "@/components/auth/AuthRadar";
 import { Alert } from "@/components/ui/Alert";
@@ -12,8 +12,20 @@ import { useTheme } from "@/lib/theme/ThemeProvider";
 
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
+// useSearchParams() forces the page out of the static-prerender pass
+// unless its consumer sits inside a Suspense boundary. Same shape as
+// the reset-password / accept-invite pages.
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageImpl />
+    </Suspense>
+  );
+}
+
+function LoginPageImpl() {
   const router = useRouter();
+  const params = useSearchParams();
   const { tweaks } = useTheme();
   const { signIn, status } = useAuth();
 
@@ -32,9 +44,16 @@ export default function LoginPage() {
 
   const emailInvalid = emailTouched && email.length > 0 && !EMAIL_RE.test(email);
 
+  // Where to land after a successful sign-in. The admin layout writes a
+  // `?next=<path>` when it kicks an unauth user here, so we can honour
+  // the URL the user actually wanted instead of always dumping them on
+  // /overview. Same-origin paths only — never trust an absolute or
+  // scheme-relative URL from a query param (open-redirect class).
+  const nextPath = useMemo(() => sanitiseNext(params.get("next")), [params]);
+
   useEffect(() => {
-    if (status === "authenticated") router.replace("/overview");
-  }, [status, router]);
+    if (status === "authenticated") router.replace(nextPath);
+  }, [status, nextPath, router]);
 
   // Move focus to the error banner so screen-reader users hear it and
   // sighted users see it scroll into view on small viewports.
@@ -59,7 +78,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await signIn(email.trim(), pw);
-      router.replace("/overview");
+      router.replace(nextPath);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Sign-in failed. Please try again.");
     } finally {
@@ -161,4 +180,20 @@ export default function LoginPage() {
       </div>
     </div>
   );
+}
+
+/**
+ * Whitelist `next` to same-origin paths: must start with a single "/"
+ * (so "//evil.com/x" — which the browser treats as scheme-relative —
+ * is rejected) and must not contain a scheme or backslash. Anything
+ * else falls back to the dashboard.
+ */
+function sanitiseNext(raw: string | null): string {
+  if (!raw) return "/overview";
+  const v = raw.trim();
+  if (!v.startsWith("/") || v.startsWith("//") || v.startsWith("/\\")) return "/overview";
+  if (v.includes("\\")) return "/overview";
+  // Strip control chars and anything that smells like a URL embed.
+  if (/[\s<>"`]/.test(v)) return "/overview";
+  return v;
 }

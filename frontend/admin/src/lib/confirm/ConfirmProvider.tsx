@@ -123,7 +123,10 @@ function ConfirmDialog({
   }, [onCancel]);
 
   const danger = opts.tone === "danger";
-  const iconPath = danger ? Icons.bell : Icons.check;
+  // Lock icon reads more naturally as "sensitive action" than the bell
+  // we had before; bell screamed "notification" to most operators
+  // testing the flow.
+  const iconPath = danger ? Icons.lock : Icons.check;
 
   return (
     <div className="modal-scrim" role="presentation" onClick={onCancel}>
@@ -134,34 +137,32 @@ function ConfirmDialog({
         aria-labelledby="confirm-modal-title"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-head">
+        <div className="confirm-modal-head">
           <div
             className={"confirm-modal-icon" + (danger ? " confirm-modal-icon--danger" : "")}
             aria-hidden
           >
             <Icon d={iconPath} size={18} />
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="confirm-modal-text">
             <div className="modal-title" id="confirm-modal-title">
               {opts.title}
             </div>
             {opts.body && <div className="modal-sub">{opts.body}</div>}
           </div>
         </div>
-        <div className="modal-body" style={{ paddingTop: 0 }}>
-          <div className="modal-foot">
-            <button type="button" className="btn btn-ghost" onClick={onCancel}>
-              {opts.cancelLabel ?? "Cancel"}
-            </button>
-            <button
-              type="button"
-              ref={confirmBtnRef}
-              className={"btn " + (danger ? "btn-primary btn-danger-solid" : "btn-primary")}
-              onClick={onConfirm}
-            >
-              {opts.confirmLabel ?? "Confirm"}
-            </button>
-          </div>
+        <div className="confirm-modal-foot">
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
+            {opts.cancelLabel ?? "Cancel"}
+          </button>
+          <button
+            type="button"
+            ref={confirmBtnRef}
+            className={"btn " + (danger ? "btn-danger-solid" : "btn-primary")}
+            onClick={onConfirm}
+          >
+            {opts.confirmLabel ?? "Confirm"}
+          </button>
         </div>
       </div>
     </div>

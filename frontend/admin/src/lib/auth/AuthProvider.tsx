@@ -17,7 +17,16 @@ import { type AccessClaims, decodeJwt, isExpired, isSuperAdmin } from "./jwt";
 type AuthState = {
   accessToken: string | null;
   claims: AccessClaims | null;
-  status: "anonymous" | "authenticating" | "authenticated";
+  /**
+   * "hydrating" is the transient state between mount and the
+   * sessionStorage-rehydration effect running. Without it, every full
+   * page refresh on an authenticated route briefly reports "anonymous"
+   * (effect hasn't fired yet), the admin layout redirects to /login,
+   * THEN hydration flips status to "authenticated", and the login page
+   * bounces to /overview — losing whatever path the user actually
+   * refreshed. Treat "hydrating" as "don't redirect yet".
+   */
+  status: "hydrating" | "anonymous" | "authenticating" | "authenticated";
 };
 
 type AuthCtx = AuthState & {
@@ -49,7 +58,10 @@ type LoginResponse = {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [status, setStatus] = useState<AuthState["status"]>("anonymous");
+  // Start in "hydrating" — flipped to anonymous/authenticated by the
+  // sessionStorage rehydration effect below. Keeps the admin layout
+  // from prematurely redirecting to /login on a real-page refresh.
+  const [status, setStatus] = useState<AuthState["status"]>("hydrating");
 
   // Refresh is kept out of React state — it's only ever read inside the
   // refresh() callback, never rendered. Using a ref keeps it out of the
