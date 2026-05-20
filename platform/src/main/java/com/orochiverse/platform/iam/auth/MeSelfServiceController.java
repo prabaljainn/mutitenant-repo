@@ -2,6 +2,7 @@ package com.orochiverse.platform.iam.auth;
 
 import java.util.List;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -16,12 +17,14 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.orochiverse.platform.common.security.auth.AuthenticatedUser;
 import com.orochiverse.platform.iam.auth.AuthDtos.TokenResponse;
 import com.orochiverse.platform.iam.auth.MeSelfServiceDtos.ChangePasswordRequest;
 import com.orochiverse.platform.iam.auth.MeSelfServiceDtos.ProfileResponse;
+import com.orochiverse.platform.iam.auth.MeSelfServiceDtos.RevokeOthersResponse;
 import com.orochiverse.platform.iam.auth.MeSelfServiceDtos.SessionResponse;
 import com.orochiverse.platform.iam.auth.MeSelfServiceDtos.UpdateProfileRequest;
 
@@ -76,9 +79,11 @@ public class MeSelfServiceController {
     @PostMapping("/password")
     @PreAuthorize("isAuthenticated()")
     public TokenResponse changePassword(@Valid @RequestBody ChangePasswordRequest req,
-                                        @AuthenticationPrincipal AuthenticatedUser caller) {
+                                        @AuthenticationPrincipal AuthenticatedUser caller,
+                                        HttpServletRequest http) {
         return service.changePassword(caller.claims().userId(),
-                req.currentPassword(), req.newPassword());
+                req.currentPassword(), req.newPassword(),
+                clientIp(http), http.getHeader("User-Agent"));
     }
 
     @GetMapping("/sessions")
@@ -94,5 +99,35 @@ public class MeSelfServiceController {
                                               @AuthenticationPrincipal AuthenticatedUser caller) {
         service.revokeSession(caller.claims().userId(), id);
         return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
+    }
+
+    /**
+     * "Sign out everywhere else." Revokes every session for the caller
+     * except the one whose derived id is {@code keepId}. {@code keepId}
+     * is required so the SPA can keep the calling tab alive — pass the
+     * id the SPA already computes locally via
+     * {@code RefreshTokenStore.deriveSessionId}.
+     */
+    @DeleteMapping("/sessions/others")
+    @PreAuthorize("isAuthenticated()")
+    public RevokeOthersResponse revokeOtherSessions(
+            @AuthenticationPrincipal AuthenticatedUser caller,
+            @RequestParam(value = "keepId", required = false) String keepId) {
+        int count = service.revokeOtherSessions(caller.claims().userId(), keepId);
+        return new RevokeOthersResponse(count);
+    }
+
+    /**
+     * Mirrors the X-Forwarded-For-aware extraction in
+     * {@link AuthController#login}. Keeping a private copy avoids a
+     * dependency from {@code iam.auth.me} on the sibling controller.
+     */
+    private static String clientIp(HttpServletRequest req) {
+        String xff = req.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) {
+            int comma = xff.indexOf(',');
+            return comma < 0 ? xff.trim() : xff.substring(0, comma).trim();
+        }
+        return req.getRemoteAddr();
     }
 }

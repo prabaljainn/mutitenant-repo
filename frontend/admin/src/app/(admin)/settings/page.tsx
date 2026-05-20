@@ -37,29 +37,27 @@ export default function GlobalSettingsPage() {
         <BackendStatus isLoading={tenants.isLoading} error={tenants.error}>
           {active && (
             <>
-              <div
-                className="card"
-                style={{ padding: 14, display: "flex", alignItems: "center", gap: 12 }}
-              >
-                <TenantMark mark={active.mark} size={36} fontSize={13} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>Configuring</div>
-                  <div className="mono muted" style={{ fontSize: 12 }}>
-                    tenant · {active.id}
-                  </div>
+              <div className="settings-tenant-bar">
+                <TenantMark mark={active.mark} size={40} fontSize={14} />
+                <div className="settings-tenant-meta">
+                  <div className="settings-tenant-eyebrow">Configuring</div>
+                  <div className="settings-tenant-name">{active.name}</div>
+                  <div className="settings-tenant-id mono">tenant · {active.id}</div>
                 </div>
-                <select
-                  className="select"
-                  style={{ width: 280 }}
-                  value={active.id}
-                  onChange={(e) => setActiveId(e.target.value)}
-                >
-                  {(tenants.data ?? []).map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
+                <label className="settings-tenant-picker">
+                  <span className="settings-tenant-picker-label">Switch tenant</span>
+                  <select
+                    className="select"
+                    value={active.id}
+                    onChange={(e) => setActiveId(e.target.value)}
+                  >
+                    {(tenants.data ?? []).map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
               <SettingsCards tenantId={active.id} />
             </>

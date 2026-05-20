@@ -35,6 +35,8 @@ import org.springframework.stereotype.Component;
 public class InMemoryRefreshTokenStore implements RefreshTokenStore {
 
     private static final int TOKEN_BYTES = 32; // 256 bits
+    /** Cap user-agent storage so a hostile client can't blow up memory. */
+    private static final int MAX_UA_LEN = 256;
 
     private final SecureRandom random = new SecureRandom();
     private final ConcurrentHashMap<String, RefreshToken> tokens = new ConcurrentHashMap<>();
@@ -49,13 +51,20 @@ public class InMemoryRefreshTokenStore implements RefreshTokenStore {
     }
 
     @Override
-    public RefreshToken issue(String userId) {
+    public RefreshToken issue(String userId, String userAgent, String ip, Instant firstSeenAt) {
         byte[] bytes = new byte[TOKEN_BYTES];
         random.nextBytes(bytes);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
 
         Instant now = clock.instant();
-        var entry = new RefreshToken(token, userId, now, now.plus(ttl));
+        var entry = new RefreshToken(
+                token,
+                userId,
+                truncate(userAgent),
+                blankToNull(ip),
+                now,
+                firstSeenAt == null ? now : firstSeenAt,
+                now.plus(ttl));
         tokens.put(token, entry);
         return entry;
     }
@@ -89,6 +98,22 @@ public class InMemoryRefreshTokenStore implements RefreshTokenStore {
     }
 
     @Override
+    public int revokeAllForUserExcept(String userId, String keepSessionId) {
+        int[] removed = {0};
+        tokens.entrySet().removeIf(e -> {
+            RefreshToken rt = e.getValue();
+            if (!rt.userId().equals(userId)) return false;
+            if (keepSessionId != null
+                    && RefreshTokenStore.deriveSessionId(rt.token()).equals(keepSessionId)) {
+                return false;
+            }
+            removed[0]++;
+            return true;
+        });
+        return removed[0];
+    }
+
+    @Override
     public List<SessionInfo> listForUser(String userId) {
         Instant now = clock.instant();
         return tokens.values().stream()
@@ -98,7 +123,10 @@ public class InMemoryRefreshTokenStore implements RefreshTokenStore {
                 .map(t -> new SessionInfo(
                         RefreshTokenStore.deriveSessionId(t.token()),
                         t.issuedAt(),
-                        t.expiresAt()))
+                        t.firstSeenAt(),
+                        t.expiresAt(),
+                        t.userAgent(),
+                        t.ip()))
                 .toList();
     }
 
@@ -118,5 +146,18 @@ public class InMemoryRefreshTokenStore implements RefreshTokenStore {
             }
         }
         return false;
+    }
+
+    private static String truncate(String s) {
+        if (s == null) return null;
+        String trimmed = s.strip();
+        if (trimmed.isEmpty()) return null;
+        return trimmed.length() <= MAX_UA_LEN ? trimmed : trimmed.substring(0, MAX_UA_LEN);
+    }
+
+    private static String blankToNull(String s) {
+        if (s == null) return null;
+        String trimmed = s.strip();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

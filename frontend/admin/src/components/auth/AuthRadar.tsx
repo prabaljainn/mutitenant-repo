@@ -13,7 +13,6 @@ export function AuthRadar() {
       </div>
       <div className="auth-visual-caption">
         <b>CLOUDGCS · LIVE</b>
-        <span>3 active drones · 1 tenant</span>
       </div>
     </div>
   );

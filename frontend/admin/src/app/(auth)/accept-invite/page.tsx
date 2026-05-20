@@ -5,6 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState, type FormEvent } from "react";
 
 import { AuthRadar } from "@/components/auth/AuthRadar";
+import { Alert } from "@/components/ui/Alert";
+import { PasswordInput } from "@/components/ui/PasswordInput";
+import { PasswordStrength } from "@/components/ui/PasswordStrength";
 import { acceptInvite } from "@/lib/api/auth";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { decodeJwt } from "@/lib/auth/jwt";
@@ -103,18 +106,25 @@ function AcceptInviteImpl() {
               </p>
 
               {tokenMissing && (
-                <div className="field-hint" style={{ color: "var(--bad)", marginBottom: 12 }}>
-                  This link is missing an invitation token. It may have been truncated by your email
-                  client — try copying the URL directly from the email.
+                <div style={{ marginBottom: 16 }}>
+                  <Alert tone="warn">
+                    This link is missing an invitation token. It may have been truncated by your
+                    email client — try copying the URL directly from the email.
+                  </Alert>
+                </div>
+              )}
+
+              {err && (
+                <div style={{ marginBottom: 16 }}>
+                  <Alert tone="error">{err}</Alert>
                 </div>
               )}
 
               <div className="field">
                 <label className="field-label">New password</label>
-                <input
-                  className="input"
-                  type="password"
+                <PasswordInput
                   autoFocus
+                  autoComplete="new-password"
                   value={pw}
                   onChange={(e) => {
                     setPw(e.target.value);
@@ -122,14 +132,17 @@ function AcceptInviteImpl() {
                   }}
                   disabled={tokenMissing || submitting}
                 />
-                <span className="field-hint">At least {MIN_PASSWORD_LENGTH} characters.</span>
+                <PasswordStrength
+                  value={pw}
+                  confirm={confirm}
+                  minLength={MIN_PASSWORD_LENGTH}
+                />
               </div>
 
               <div className="field" style={{ marginTop: 14 }}>
                 <label className="field-label">Confirm password</label>
-                <input
-                  className="input"
-                  type="password"
+                <PasswordInput
+                  autoComplete="new-password"
                   value={confirm}
                   onChange={(e) => {
                     setConfirm(e.target.value);
@@ -139,13 +152,11 @@ function AcceptInviteImpl() {
                 />
               </div>
 
-              {err && (
-                <div className="field-hint" style={{ color: "var(--bad)", marginTop: 8 }}>
-                  {err}
-                </div>
-              )}
-
-              <button className="btn btn-primary submit" disabled={tokenMissing || submitting}>
+              <button
+                className="btn btn-primary submit"
+                disabled={tokenMissing || submitting}
+                aria-busy={submitting || undefined}
+              >
                 {submitting ? "Activating…" : "Activate account"}
               </button>
 

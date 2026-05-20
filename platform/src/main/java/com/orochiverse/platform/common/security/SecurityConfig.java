@@ -110,6 +110,14 @@ public class SecurityConfig {
                                 "/api/auth/login",
                                 "/api/auth/oauth-token",
                                 "/api/auth/refresh",
+                                // Logout authenticates itself via the refresh
+                                // token in the body — same model as /refresh.
+                                // Requiring a valid access token here means a
+                                // stale tab can't revoke its own session
+                                // (the SPA fires logout fire-and-forget after
+                                // wiping local tokens), so sessions would
+                                // accumulate in the refresh-token store.
+                                "/api/auth/logout",
                                 "/api/auth/forgot-password",
                                 "/api/auth/reset-password",
                                 "/api/auth/accept-invite").permitAll()

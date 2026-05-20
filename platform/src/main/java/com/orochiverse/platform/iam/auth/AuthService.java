@@ -111,7 +111,7 @@ public class AuthService {
      * single {@link InvalidCredentialsException} so the response can't be
      * used to enumerate accounts.
      */
-    public TokenResponse login(String email, String rawPassword, String ip) {
+    public TokenResponse login(String email, String rawPassword, String ip, String userAgent) {
         // Throttle BEFORE doing any DB / hashing work — denies attackers
         // the per-attempt CPU + I/O cost in addition to the auth signal.
         try {
@@ -139,7 +139,7 @@ public class AuthService {
         rateLimiter.recordSuccess(email, ip);
 
         var access = issueAccessTokenForUser(user, /*tidOverride*/ null);
-        var refresh = refreshTokens.issue(user.id());
+        var refresh = refreshTokens.issue(user.id(), userAgent, ip, /*firstSeenAt*/ null);
 
         audit.save(AuditEntry.of(AuditAction.LOGIN_SUCCESS, user.id()));
         metrics.loginSuccess();
@@ -162,7 +162,7 @@ public class AuthService {
     // Refresh (rotation on use)
     // ─────────────────────────────────────────────────────────────────────
 
-    public TokenResponse refresh(String refreshToken) {
+    public TokenResponse refresh(String refreshToken, String ip, String userAgent) {
         RefreshToken consumed = refreshTokens.consume(refreshToken)
                 .orElseThrow(() -> new InvalidRefreshTokenException("refresh token not recognized"));
 
@@ -176,8 +176,14 @@ public class AuthService {
             throw new InvalidRefreshTokenException("user is not active");
         }
 
+        // Carry the original session's firstSeenAt forward so the Account
+        // page can show "signed in 3 days ago" instead of "1 second ago"
+        // every time the SPA rotates. UA / IP take the freshest values —
+        // matches the Google "last seen here" behaviour.
         var access = issueAccessTokenForUser(user, /*tidOverride*/ null);
-        var freshRefresh = refreshTokens.issue(user.id());
+        String nextUa = userAgent != null ? userAgent : consumed.userAgent();
+        String nextIp = ip != null ? ip : consumed.ip();
+        var freshRefresh = refreshTokens.issue(user.id(), nextUa, nextIp, consumed.firstSeenAt());
 
         return TokenResponse.bearer(access, freshRefresh.token(), accessTokenTtlSeconds);
     }
@@ -298,7 +304,7 @@ public class AuthService {
      * — the OPERATOR_INVITED / TENANT_USER_INVITED entry already records
      * the invite).
      */
-    public TokenResponse acceptInvite(String token, String newPassword) {
+    public TokenResponse acceptInvite(String token, String newPassword, String ip, String userAgent) {
         SingleUseToken consumed = singleUseTokens.consume(token, TokenPurpose.INVITE_ACCEPT);
         User user = users.findById(consumed.userId())
                 .orElseThrow(() -> new InvalidTokenException("user no longer exists"));
@@ -317,7 +323,7 @@ public class AuthService {
 
         // Auto-login: issue access + refresh just like POST /login would.
         var access = issueAccessTokenForUser(activated, /*tidOverride*/ null);
-        var refresh = refreshTokens.issue(activated.id());
+        var refresh = refreshTokens.issue(activated.id(), userAgent, ip, /*firstSeenAt*/ null);
         return TokenResponse.bearer(access, refresh.token(), accessTokenTtlSeconds);
     }
 

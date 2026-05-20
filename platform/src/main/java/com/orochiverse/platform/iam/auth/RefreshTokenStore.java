@@ -15,16 +15,19 @@ import java.util.Optional;
  *
  * <h2>Lifecycle</h2>
  * <ol>
- *   <li>{@link #issue(String)} mints a fresh random 256-bit token, records
- *       it as belonging to {@code userId}, and returns it. Caller is
- *       expected to hand the token back to the client.</li>
+ *   <li>{@link #issue(String, String, String, Instant)} mints a fresh
+ *       random 256-bit token, records it as belonging to {@code userId},
+ *       and returns it.</li>
  *   <li>{@link #consume(String)} atomically looks up the token, removes it
- *       from the store, and returns the bound user — i.e. consume-on-use
+ *       from the store, and returns the bound entry — i.e. consume-on-use
  *       so a leaked refresh token is single-shot. Returns empty if missing
  *       or expired.</li>
  *   <li>{@link #revoke(String)} explicit cancellation (logout); idempotent.</li>
  *   <li>{@link #revokeAllForUser(String)} blunt instrument used when the
  *       user's password changes or the account is suspended.</li>
+ *   <li>{@link #revokeAllForUserExcept(String, String)} powers the
+ *       "sign out everywhere else" affordance on the Account page —
+ *       keeps the caller's own session alive.</li>
  * </ol>
  *
  * <p>Refresh tokens are NOT JWTs — they're opaque random strings. The store
@@ -38,8 +41,33 @@ import java.util.Optional;
  */
 public interface RefreshTokenStore {
 
-    /** Mint and persist a fresh refresh token for {@code userId}. */
-    RefreshToken issue(String userId);
+    /**
+     * Mint and persist a fresh refresh token for {@code userId}, optionally
+     * tagging it with the request's user-agent + IP and the
+     * {@code firstSeenAt} timestamp inherited from a previous rotated
+     * token. All three are nullable: pass {@code null} when the call site
+     * has no request scope (e.g. self-service password change running
+     * inside a service method) — the store will substitute sensible
+     * defaults.
+     *
+     * @param firstSeenAt when this session originally started; on rotation
+     *                    the caller passes the previous token's
+     *                    {@code firstSeenAt} so the UI can keep showing
+     *                    "signed in 3 days ago" across refreshes. Pass
+     *                    {@code null} for a brand-new session.
+     */
+    RefreshToken issue(String userId, String userAgent, String ip, Instant firstSeenAt);
+
+    /**
+     * Convenience overload — no session-context metadata. Used by tests
+     * and by the in-process rotation triggered from
+     * {@link MeSelfService#changePassword(String, String, String)} where
+     * the new session is intentionally a fresh start with no carried-over
+     * device info.
+     */
+    default RefreshToken issue(String userId) {
+        return issue(userId, null, null, null);
+    }
 
     /**
      * Atomically look up + remove the token. Returns the bound entry on
@@ -56,11 +84,29 @@ public interface RefreshTokenStore {
     void revokeAllForUser(String userId);
 
     /**
+     * Revoke every session for {@code userId} except the one whose
+     * derived id matches {@code keepSessionId}. Returns the number of
+     * revoked sessions (not counting the kept one). If {@code keepSessionId}
+     * is {@code null} or matches no row, this degenerates to
+     * {@link #revokeAllForUser(String)}.
+     */
+    int revokeAllForUserExcept(String userId, String keepSessionId);
+
+    /**
      * Snapshot of one outstanding refresh token, safe to expose. The
      * {@code id} is derived from {@link #deriveSessionId(String)} so the
-     * raw token never appears in the response.
+     * raw token never appears in the response. {@code userAgent} and
+     * {@code ip} are best-effort: they may be {@code null} for sessions
+     * minted before the field existed or rotated in a context with no
+     * request (e.g. password-change rotation).
      */
-    record SessionInfo(String id, Instant issuedAt, Instant expiresAt) {}
+    record SessionInfo(
+            String id,
+            Instant issuedAt,
+            Instant firstSeenAt,
+            Instant expiresAt,
+            String userAgent,
+            String ip) {}
 
     /**
      * Lists the live (non-expired) sessions belonging to {@code userId},

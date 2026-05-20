@@ -92,19 +92,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (email: string, password: string) => {
       setStatus("authenticating");
       try {
-        const res = await fetch("/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password }),
-        });
+        let res: Response;
+        try {
+          res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password }),
+          });
+        } catch {
+          // Browser-level failure (offline, DNS, CORS preflight). The
+          // backend never saw the request, so don't leak any
+          // "credentials" framing into the message.
+          throw new Error("Can't reach the platform. Check your connection and try again.");
+        }
         if (!res.ok) {
-          const txt = await res.text().catch(() => "");
-          throw new Error(txt || `Login failed (${res.status})`);
+          // The backend's AuthExceptionHandler returns a JSON envelope:
+          //   { status, error, message, path, timestamp }
+          // Map known error codes to user-facing copy that doesn't leak
+          // backend internals — falling back to the server's `message`
+          // for codes we haven't seen yet, and finally to a generic.
+          const body = await readJson(res);
+          throw new Error(translateAuthError(res.status, body));
         }
         const json = (await res.json()) as LoginResponse;
         const decoded = decodeJwt(json.accessToken);
         if (!isSuperAdmin(decoded)) {
-          throw new Error("This account doesn't have admin access.");
+          throw new Error("This account doesn't have admin-console access.");
         }
         persistTokens(json.accessToken, json.refreshToken);
         setStatus("authenticated");
@@ -118,19 +131,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     const rt = refreshTokenRef.current;
+    // Revoke the session server-side BEFORE clearing local state and
+    // navigating — otherwise the page-unload races the fetch and the
+    // refresh token stays alive in the platform's session store, which
+    // is what causes "Active sessions" to accumulate one row per logout.
+    // 2-second cap so a slow/dead backend can't trap the user in a
+    // logged-in shell; revocation is still best-effort, but in the happy
+    // path it actually lands.
+    if (rt) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 2000);
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refreshToken: rt }),
+          signal: controller.signal,
+          keepalive: true,
+        });
+        clearTimeout(timer);
+      } catch {
+        // Swallow — local state still gets cleared below so the user
+        // sees an immediate logout even if the platform is unreachable.
+      }
+    }
     sessionStorage.removeItem(ACCESS_KEY);
     sessionStorage.removeItem(REFRESH_KEY);
     refreshTokenRef.current = null;
     setAccessToken(null);
     setStatus("anonymous");
-    // Fire-and-forget; the server-side revocation is best-effort.
-    if (rt) {
-      void fetch("/api/auth/logout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken: rt }),
-      }).catch(() => {});
-    }
     router.replace("/login");
   }, [router]);
 
@@ -185,4 +214,39 @@ export function useAuth(): AuthCtx {
   const ctx = useContext(Ctx);
   if (!ctx) throw new Error("useAuth() must be used inside <AuthProvider>");
   return ctx;
+}
+
+type AuthErrorBody = { error?: string; message?: string };
+
+async function readJson(res: Response): Promise<AuthErrorBody | null> {
+  try {
+    return (await res.json()) as AuthErrorBody;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Map the platform's error envelope into the copy the login form should
+ * actually show the user. Keeps the form clean of leaking JSON, paths,
+ * or timestamps — and standardises wording for the few security-relevant
+ * cases (credentials, rate-limit) regardless of which exact field the
+ * backend objected to.
+ */
+function translateAuthError(status: number, body: AuthErrorBody | null): string {
+  const code = body?.error;
+  if (code === "invalid_credentials") return "Email or password is incorrect.";
+  if (code === "rate_limited")
+    return "Too many sign-in attempts. Please wait a few minutes and try again.";
+  if (code === "operator_not_assigned")
+    return "This account isn't allowed in the admin console.";
+  if (code === "validation_failed") return "Please check your email and password and try again.";
+  if (status === 401) return "Email or password is incorrect.";
+  if (status === 403) return "This account doesn't have access to the admin console.";
+  if (status === 429)
+    return "Too many sign-in attempts. Please wait a few minutes and try again.";
+  if (status >= 500) return "The platform is having trouble right now. Please try again shortly.";
+  // Final fallback — prefer the server's prose if it set one, otherwise
+  // a generic, never raw JSON.
+  return body?.message?.trim() || "Sign-in failed. Please try again.";
 }

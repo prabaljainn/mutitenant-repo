@@ -27,6 +27,31 @@ export function bindAuth(t: Tokens) {
   tokens = t;
 }
 
+/**
+ * One-time hook used by the toast layer so we can surface a single
+ * "platform unreachable" toast when fetch itself throws — i.e. the
+ * browser couldn't reach the server (offline, DNS failure, CORS
+ * preflight reject, dev server stopped). Distinct from a 4xx/5xx
+ * response, which carries its own error JSON the caller already shows.
+ *
+ * The handler is rate-limited inside this module so a burst of failing
+ * queries on dashboard mount only fires once per cooldown window.
+ */
+type UnreachableHandler = (err: unknown) => void;
+let unreachable: UnreachableHandler | null = null;
+let lastUnreachableAt = 0;
+const UNREACHABLE_COOLDOWN_MS = 10_000;
+export function bindUnreachable(h: UnreachableHandler) {
+  unreachable = h;
+}
+function reportUnreachable(err: unknown) {
+  if (!unreachable) return;
+  const now = Date.now();
+  if (now - lastUnreachableAt < UNREACHABLE_COOLDOWN_MS) return;
+  lastUnreachableAt = now;
+  unreachable(err);
+}
+
 export type RequestInit_ = RequestInit & { json?: unknown };
 
 export async function api<T>(path: string, init: RequestInit_ = {}): Promise<T> {
@@ -39,7 +64,17 @@ export async function api<T>(path: string, init: RequestInit_ = {}): Promise<T> 
   const access = tokens?.getAccessToken();
   if (access) headers.set("Authorization", `Bearer ${access}`);
 
-  let res = await fetch(path, { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(path, { ...init, headers });
+  } catch (err) {
+    // Browser-level failure — the request never reached the platform.
+    // Surface once via the unreachable hook so the user gets one toast
+    // instead of N "BackendStatus" empty panes, then rethrow as ApiError
+    // so the query layer still records a failure.
+    reportUnreachable(err);
+    throw new ApiError(0, "Can't reach the platform.", null);
+  }
 
   // 401 → try to refresh once, then retry the original request.
   if (res.status === 401 && tokens) {

@@ -5,6 +5,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState, type FormEvent } from "react";
 
 import { AuthRadar } from "@/components/auth/AuthRadar";
+import { Icon } from "@/components/icons/Icon";
+import { Icons } from "@/components/icons/icons";
+import { Alert } from "@/components/ui/Alert";
+import { PasswordInput } from "@/components/ui/PasswordInput";
+import { PasswordStrength } from "@/components/ui/PasswordStrength";
 import { resetPassword } from "@/lib/api/auth";
 import { useTheme } from "@/lib/theme/ThemeProvider";
 
@@ -87,18 +92,25 @@ function ResetPasswordImpl() {
               </p>
 
               {tokenMissing && (
-                <div className="field-hint" style={{ color: "var(--bad)", marginBottom: 12 }}>
-                  This link is missing a reset token. It may have been truncated by your email
-                  client — try copying the URL directly from the email.
+                <div style={{ marginBottom: 16 }}>
+                  <Alert tone="warn">
+                    This link is missing a reset token. It may have been truncated by your email
+                    client — try copying the URL directly from the email.
+                  </Alert>
+                </div>
+              )}
+
+              {err && (
+                <div style={{ marginBottom: 16 }}>
+                  <Alert tone="error">{err}</Alert>
                 </div>
               )}
 
               <div className="field">
                 <label className="field-label">New password</label>
-                <input
-                  className="input"
-                  type="password"
+                <PasswordInput
                   autoFocus
+                  autoComplete="new-password"
                   value={pw}
                   onChange={(e) => {
                     setPw(e.target.value);
@@ -106,14 +118,17 @@ function ResetPasswordImpl() {
                   }}
                   disabled={tokenMissing || submitting}
                 />
-                <span className="field-hint">At least {MIN_PASSWORD_LENGTH} characters.</span>
+                <PasswordStrength
+                  value={pw}
+                  confirm={confirm}
+                  minLength={MIN_PASSWORD_LENGTH}
+                />
               </div>
 
               <div className="field" style={{ marginTop: 14 }}>
                 <label className="field-label">Confirm password</label>
-                <input
-                  className="input"
-                  type="password"
+                <PasswordInput
+                  autoComplete="new-password"
                   value={confirm}
                   onChange={(e) => {
                     setConfirm(e.target.value);
@@ -123,19 +138,16 @@ function ResetPasswordImpl() {
                 />
               </div>
 
-              {err && (
-                <div className="field-hint" style={{ color: "var(--bad)", marginTop: 8 }}>
-                  {err}
-                </div>
-              )}
-
-              <button className="btn btn-primary submit" disabled={tokenMissing || submitting}>
+              <button
+                className="btn btn-primary submit"
+                disabled={tokenMissing || submitting}
+                aria-busy={submitting || undefined}
+              >
                 {submitting ? "Saving…" : "Save new password"}
               </button>
 
               <div className="alt">
-                Remembered your password?{" "}
-                <Link href="/login">Sign in</Link>
+                Remembered your password? <Link href="/login">Sign in</Link>
               </div>
             </form>
           )}
@@ -151,6 +163,9 @@ function ResetPasswordImpl() {
 function ResetDoneNotice() {
   return (
     <div className="auth-form">
+      <div className="auth-success-mark" aria-hidden>
+        <Icon d={Icons.check} size={22} />
+      </div>
       <h1>Password updated</h1>
       <p className="sub">Redirecting you to sign in…</p>
     </div>

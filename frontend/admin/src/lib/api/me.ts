@@ -41,6 +41,20 @@ export const meApi = {
 
   revokeSession: (id: string) =>
     api<void>(`/api/auth/me/sessions/${id}`, { method: "DELETE" }),
+
+  /**
+   * "Sign out everywhere else". Revokes every session except the supplied
+   * one (the caller's current session id). The backend returns the
+   * number of sessions it actually killed so the UI can show a precise
+   * toast ("Signed out of 3 other devices"). Pass {@code null} only if
+   * the SPA can't compute its own session id — that will revoke the
+   * current session too and force a re-login.
+   */
+  revokeOtherSessions: (keepId: string | null) =>
+    api<{ count: number }>(
+      `/api/auth/me/sessions/others${keepId ? `?keepId=${encodeURIComponent(keepId)}` : ""}`,
+      { method: "DELETE" },
+    ),
 };
 
 /**

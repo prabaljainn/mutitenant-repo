@@ -6,11 +6,13 @@
 
 import { useEffect, type ReactNode } from "react";
 
-import { bindAuth } from "@/lib/api/client";
+import { bindAuth, bindUnreachable } from "@/lib/api/client";
+import { useToast } from "@/lib/toast/ToastProvider";
 import { useAuth } from "./AuthProvider";
 
 export function AuthBridge({ children }: { children: ReactNode }) {
   const { accessToken, refresh, signOut } = useAuth();
+  const { notify } = useToast();
   useEffect(() => {
     bindAuth({
       getAccessToken: () => accessToken,
@@ -18,5 +20,16 @@ export function AuthBridge({ children }: { children: ReactNode }) {
       signOut,
     });
   }, [accessToken, refresh, signOut]);
+  // Single session-wide toast when fetch itself fails (offline, DNS, dev
+  // server stopped). Internally rate-limited in api/client.ts so a burst
+  // of failing parallel queries doesn't spam.
+  useEffect(() => {
+    bindUnreachable(() => {
+      notify(
+        "Can't reach the platform — check your connection or try again shortly.",
+        "error",
+      );
+    });
+  }, [notify]);
   return <>{children}</>;
 }

@@ -45,9 +45,28 @@ public final class MeSelfServiceDtos {
      * stable 16-hex SHA-256-prefix of the opaque refresh token —
      * irreversible, safe to expose, and computable client-side so the SPA
      * can highlight the row matching its own session.
+     *
+     * <p>{@code userAgent} and {@code ip} are best-effort: they may be
+     * {@code null} for sessions minted before the field existed or rotated
+     * in a context with no inbound request (e.g. password-change). The
+     * UI is expected to fall back to a generic "Unknown device" label
+     * when either is missing. {@code firstSeenAt} is preserved across
+     * token rotation so the UI can show "signed in N days ago" even
+     * though the underlying token rotated minutes ago.
      */
     public record SessionResponse(
             String id,
             Instant issuedAt,
-            Instant expiresAt) {}
+            Instant firstSeenAt,
+            Instant expiresAt,
+            String userAgent,
+            String ip) {}
+
+    /**
+     * Result of {@code DELETE /api/auth/me/sessions/others}. {@code count}
+     * is what was revoked (excluding the caller's own session), letting
+     * the UI render a precise confirmation like
+     * "Signed out of 3 other devices".
+     */
+    public record RevokeOthersResponse(int count) {}
 }

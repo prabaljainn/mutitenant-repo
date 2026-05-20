@@ -35,12 +35,15 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <ThemeProvider>
           <QueryProvider>
             <AuthProvider>
-              <AuthBridge>
-                <ToastProvider>
+              <ToastProvider>
+                {/* AuthBridge wires the api/client to both AuthProvider
+                    (token refresh) and ToastProvider (unreachable toast),
+                    so it MUST sit inside both. Reorder with care. */}
+                <AuthBridge>
                   {children}
                   {tweaksEnabled && <TweaksPanel />}
-                </ToastProvider>
-              </AuthBridge>
+                </AuthBridge>
+              </ToastProvider>
             </AuthProvider>
           </QueryProvider>
         </ThemeProvider>

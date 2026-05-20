@@ -84,11 +84,11 @@ class AuthServiceTest {
         when(issuer.issue(eq("op-1"), eq("op@x.example"), eq(UserKind.OPERATOR),
                 eq(OperatorRole.OPERATOR_ADMIN), eq(null), eq(null), eq(0)))
                 .thenReturn(new AccessTokenIssuer.Issued("the-access-token", null));
-        when(refreshTokens.issue("op-1"))
+        when(refreshTokens.issue(eq("op-1"), any(), any(), any()))
                 .thenReturn(new RefreshToken("the-refresh-token", "op-1",
                         Instant.now(), Instant.now().plus(Duration.ofDays(30))));
 
-        var resp = service.login("op@x.example", "hunter2", "127.0.0.1");
+        var resp = service.login("op@x.example", "hunter2", "127.0.0.1", "test-agent");
 
         assertThat(resp.accessToken()).isEqualTo("the-access-token");
         assertThat(resp.refreshToken()).isEqualTo("the-refresh-token");
@@ -105,7 +105,7 @@ class AuthServiceTest {
     void login_rejects_unknown_email_and_audits_failure() {
         when(users.findByEmailIgnoreCase("ghost@x.example")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.login("ghost@x.example", "anything", "127.0.0.1"))
+        assertThatThrownBy(() -> service.login("ghost@x.example", "anything", "127.0.0.1", "test-agent"))
                 .isInstanceOf(InvalidCredentialsException.class);
 
         ArgumentCaptor<AuditEntry> entry = ArgumentCaptor.forClass(AuditEntry.class);
@@ -113,7 +113,7 @@ class AuthServiceTest {
         assertThat(entry.getValue().action()).isEqualTo(AuditAction.LOGIN_FAILURE);
         assertThat(entry.getValue().metadata()).containsEntry("email", "ghost@x.example");
 
-        verify(refreshTokens, never()).issue(any());
+        verify(refreshTokens, never()).issue(any(), any(), any(), any());
         verify(issuer, never()).issue(any(), any(), any(), any(), any(), any(), eq(0));
     }
 
@@ -123,11 +123,11 @@ class AuthServiceTest {
         when(users.findByEmailIgnoreCase("op@x.example")).thenReturn(Optional.of(op));
         when(passwords.matches("wrong", op.passwordHash())).thenReturn(false);
 
-        assertThatThrownBy(() -> service.login("op@x.example", "wrong", "127.0.0.1"))
+        assertThatThrownBy(() -> service.login("op@x.example", "wrong", "127.0.0.1", "test-agent"))
                 .isInstanceOf(InvalidCredentialsException.class);
 
         verify(audit, times(1)).save(any());
-        verify(refreshTokens, never()).issue(any());
+        verify(refreshTokens, never()).issue(any(), any(), any(), any());
     }
 
     @Test
@@ -141,10 +141,10 @@ class AuthServiceTest {
         when(users.findByEmailIgnoreCase("op@x.example")).thenReturn(Optional.of(suspended));
         when(passwords.matches("hunter2", suspended.passwordHash())).thenReturn(true);
 
-        assertThatThrownBy(() -> service.login("op@x.example", "hunter2", "127.0.0.1"))
+        assertThatThrownBy(() -> service.login("op@x.example", "hunter2", "127.0.0.1", "test-agent"))
                 .isInstanceOf(InvalidCredentialsException.class);
 
-        verify(refreshTokens, never()).issue(any());
+        verify(refreshTokens, never()).issue(any(), any(), any(), any());
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -161,23 +161,23 @@ class AuthServiceTest {
         when(issuer.issue(eq("op-1"), eq("op@x.example"), eq(UserKind.OPERATOR),
                 eq(OperatorRole.OPERATOR_ADMIN), eq(null), eq(null), eq(0)))
                 .thenReturn(new AccessTokenIssuer.Issued("new-access", null));
-        when(refreshTokens.issue("op-1"))
+        when(refreshTokens.issue(eq("op-1"), any(), any(), any()))
                 .thenReturn(new RefreshToken("new-rt", "op-1",
                         Instant.now(), Instant.now().plus(Duration.ofDays(30))));
 
-        var resp = service.refresh("old-rt");
+        var resp = service.refresh("old-rt", "127.0.0.1", "test-agent");
 
         assertThat(resp.accessToken()).isEqualTo("new-access");
         assertThat(resp.refreshToken()).isEqualTo("new-rt");
         verify(refreshTokens).consume("old-rt");  // old one removed
-        verify(refreshTokens).issue("op-1");      // fresh one minted
+        verify(refreshTokens).issue(eq("op-1"), any(), any(), any());      // fresh one minted
     }
 
     @Test
     void refresh_rejects_unknown_or_expired_token() {
         when(refreshTokens.consume("rotten")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.refresh("rotten"))
+        assertThatThrownBy(() -> service.refresh("rotten", "127.0.0.1", "test-agent"))
                 .isInstanceOf(InvalidRefreshTokenException.class);
 
         verify(users, never()).findById(any());
@@ -192,10 +192,10 @@ class AuthServiceTest {
                         Instant.now(), Instant.now().plus(Duration.ofDays(1)))));
         when(users.findById("op-1")).thenReturn(Optional.of(suspended));
 
-        assertThatThrownBy(() -> service.refresh("old-rt"))
+        assertThatThrownBy(() -> service.refresh("old-rt", "127.0.0.1", "test-agent"))
                 .isInstanceOf(InvalidRefreshTokenException.class);
 
-        verify(refreshTokens, never()).issue(any());
+        verify(refreshTokens, never()).issue(any(), any(), any(), any());
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -389,11 +389,11 @@ class AuthServiceTest {
         when(issuer.issue(any(), any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyInt()))
                 .thenReturn(new com.orochiverse.platform.common.security.jwt.AccessTokenIssuer.Issued(
                         "access-jwt", null));
-        when(refreshTokens.issue("op-1"))
+        when(refreshTokens.issue(eq("op-1"), any(), any(), any()))
                 .thenReturn(new RefreshToken("rt", "op-1",
                         Instant.now(), Instant.now().plus(Duration.ofDays(30))));
 
-        var resp = service.acceptInvite("invite", "welcome!");
+        var resp = service.acceptInvite("invite", "welcome!", "127.0.0.1", "test-agent");
 
         assertThat(resp.accessToken()).isEqualTo("access-jwt");
         assertThat(resp.refreshToken()).isEqualTo("rt");
@@ -416,7 +416,7 @@ class AuthServiceTest {
                         Instant.now(), Instant.now().plus(Duration.ofDays(1))));
         when(users.findById("op-1")).thenReturn(Optional.of(op));
 
-        assertThatThrownBy(() -> service.acceptInvite("invite", "welcome!"))
+        assertThatThrownBy(() -> service.acceptInvite("invite", "welcome!", "127.0.0.1", "test-agent"))
                 .isInstanceOf(com.orochiverse.platform.iam.tokens.InvalidTokenException.class);
 
         verify(users, never()).save(any());

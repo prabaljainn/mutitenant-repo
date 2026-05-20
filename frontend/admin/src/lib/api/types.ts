@@ -107,11 +107,18 @@ export type UserSearchResult = {
 
 /** One active refresh-token session belonging to the current user.
  *  {@code id} is a stable, irreversible 16-hex SHA-256 prefix so the
- *  raw token never leaves the server. */
+ *  raw token never leaves the server. {@code userAgent} / {@code ip} are
+ *  best-effort and may be null for sessions issued before that field
+ *  existed or rotated outside a request scope. {@code firstSeenAt}
+ *  survives token rotation so the UI can show "signed in 3 days ago"
+ *  even while the underlying refresh token rotates every 15 min. */
 export type Session = {
   id: string;
   issuedAt: string;
+  firstSeenAt: string;
   expiresAt: string;
+  userAgent: string | null;
+  ip: string | null;
 };
 
 /** Response from {@code GET /api/auth/me/profile} and PATCH equivalent. */

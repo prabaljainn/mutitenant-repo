@@ -9,10 +9,13 @@ import { Topbar } from "@/components/shell/Topbar";
 import { Card, CardBody, CardHead } from "@/components/ui/Card";
 import { Field } from "@/components/ui/Field";
 import { BackendStatus } from "@/components/ui/EmptyState";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { deriveSessionId, meApi } from "@/lib/api/me";
+import type { Session } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useToast } from "@/lib/toast/ToastProvider";
-import { formatGB, formatTime } from "@/lib/utils/date";
+import { formatGB, formatRelative, formatTime } from "@/lib/utils/date";
+import { describeUserAgent } from "@/lib/utils/userAgent";
 
 export default function AccountPage() {
   return (
@@ -179,9 +182,7 @@ function PasswordCard() {
       <CardBody>
         <div style={{ display: "grid", gap: 14, maxWidth: 420 }}>
           <Field label="Current password">
-            <input
-              className="input"
-              type="password"
+            <PasswordInput
               autoComplete="current-password"
               value={currentPassword}
               onChange={(e) => setCurrent(e.target.value)}
@@ -192,9 +193,7 @@ function PasswordCard() {
             hint={tooShort ? undefined : "Minimum 8 characters."}
             error={tooShort ? "Minimum 8 characters." : sameAsOld ? "Must differ from current." : undefined}
           >
-            <input
-              className="input"
-              type="password"
+            <PasswordInput
               autoComplete="new-password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
@@ -204,9 +203,7 @@ function PasswordCard() {
             label="Confirm new password"
             error={mismatch ? "Doesn't match the new password." : undefined}
           >
-            <input
-              className="input"
-              type="password"
+            <PasswordInput
               autoComplete="new-password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
@@ -239,6 +236,9 @@ function SessionsCard() {
   const sessions = useQuery({
     queryKey: ["me", "sessions"],
     queryFn: () => meApi.listSessions(),
+    // Refresh every minute so "last active 2 min ago" stays roughly true
+    // without the user having to reload the page.
+    refetchInterval: 60_000,
   });
 
   // Compute the current session's id once at mount by hashing the refresh
@@ -258,6 +258,24 @@ function SessionsCard() {
     },
   });
 
+  const revokeOthers = useMutation({
+    mutationFn: () => meApi.revokeOtherSessions(currentId),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["me", "sessions"] });
+      const n = res?.count ?? 0;
+      if (n === 0) {
+        notify("No other sessions were signed in.", "info");
+      } else if (n === 1) {
+        notify("Signed out of 1 other device.", "success");
+      } else {
+        notify(`Signed out of ${n} other devices.`, "success");
+      }
+    },
+    onError: (e: unknown) => {
+      notify(e instanceof Error ? e.message : "Couldn't sign out other sessions.", "error");
+    },
+  });
+
   function onRevoke(id: string) {
     if (id === currentId) {
       const ok = window.confirm(
@@ -268,84 +286,121 @@ function SessionsCard() {
     revoke.mutate(id);
   }
 
+  function onRevokeOthers() {
+    const others = (sessions.data ?? []).filter((s) => s.id !== currentId).length;
+    if (others === 0) {
+      notify("No other sessions to sign out.", "info");
+      return;
+    }
+    const ok = window.confirm(
+      `Sign out of ${others} other ${others === 1 ? "session" : "sessions"}? They'll be signed out within the next 15 minutes.`,
+    );
+    if (!ok) return;
+    revokeOthers.mutate();
+  }
+
   const rows = sessions.data ?? [];
+  const others = rows.filter((s) => s.id !== currentId).length;
 
   return (
     <Card>
       <CardHead
         title="Active sessions"
-        sub="Each row is one device / tab where you're signed in."
-      />
-      <CardBody className="card-body-flush">
-        <BackendStatus isLoading={sessions.isLoading} error={sessions.error}>
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Session</th>
-                <th>Started</th>
-                <th>Expires</th>
-                <th style={{ width: 100 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={4}
-                    style={{ padding: 24, textAlign: "center", color: "var(--fg-3)" }}
-                  >
-                    No active sessions.
-                  </td>
-                </tr>
-              ) : (
-                rows.map((s) => {
-                  const isCurrent = s.id === currentId;
-                  return (
-                    <tr key={s.id}>
-                      <td>
-                        <span className="mono">{s.id}</span>{" "}
-                        {isCurrent && (
-                          <span
-                            className="chip info"
-                            style={{ marginLeft: 6, fontSize: 11 }}
-                          >
-                            <span className="chip-dot" />
-                            This device
-                          </span>
-                        )}
-                      </td>
-                      <td className="mono muted">
-                        {formatGB(s.issuedAt)} {formatTime(s.issuedAt)}
-                      </td>
-                      <td className="mono muted">
-                        {formatGB(s.expiresAt)} {formatTime(s.expiresAt)}
-                      </td>
-                      <td>
-                        <button
-                          className="btn btn-ghost btn-sm btn-danger"
-                          disabled={revoke.isPending}
-                          onClick={() => onRevoke(s.id)}
-                        >
-                          <Icon d={Icons.trash} size={12} /> Revoke
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-          <div
-            className="muted"
-            style={{ padding: "12px 16px", fontSize: 11, lineHeight: 1.5 }}
+        sub="Each card is one device or tab where you're signed in."
+        right={
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm btn-danger"
+            disabled={others === 0 || revokeOthers.isPending}
+            onClick={onRevokeOthers}
+            title={others === 0 ? "No other sessions" : "Sign out everywhere else"}
           >
-            Sessions are kept in memory on the platform — a server restart signs
-            everyone out. {" "}
-            Refresh tokens are opaque and never shown here; the &ldquo;Session&rdquo;
-            value is a one-way hash used only to identify the row.
+            <Icon d={Icons.switch} size={12} />{" "}
+            {revokeOthers.isPending ? "Signing out…" : "Sign out everywhere else"}
+          </button>
+        }
+      />
+      <CardBody>
+        <BackendStatus isLoading={sessions.isLoading} error={sessions.error}>
+          {rows.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: "var(--fg-3)" }}>
+              No active sessions.
+            </div>
+          ) : (
+            <ul className="session-list">
+              {rows.map((s) => (
+                <SessionRow
+                  key={s.id}
+                  session={s}
+                  isCurrent={s.id === currentId}
+                  onRevoke={() => onRevoke(s.id)}
+                  revoking={revoke.isPending && revoke.variables === s.id}
+                />
+              ))}
+            </ul>
+          )}
+          <div className="session-footnote">
+            Sessions are stored in memory on the platform — a server restart signs
+            everyone out. The session id is a one-way hash; the underlying refresh
+            token is never exposed.
           </div>
         </BackendStatus>
       </CardBody>
     </Card>
+  );
+}
+
+function SessionRow({
+  session,
+  isCurrent,
+  onRevoke,
+  revoking,
+}: {
+  session: Session;
+  isCurrent: boolean;
+  onRevoke: () => void;
+  revoking: boolean;
+}) {
+  const device = describeUserAgent(session.userAgent);
+  return (
+    <li className={"session-row" + (isCurrent ? " session-row--current" : "")}>
+      <div className="session-row-icon" aria-hidden>
+        <Icon d={device.mobile ? Icons.signal : Icons.console} size={18} />
+      </div>
+      <div className="session-row-main">
+        <div className="session-row-title">
+          <span className="session-row-device">{device.label}</span>
+          {isCurrent && (
+            <span className="chip info" style={{ fontSize: 11 }}>
+              <span className="chip-dot" />
+              This device
+            </span>
+          )}
+        </div>
+        <div className="session-row-meta">
+          <span title={`${formatGB(session.issuedAt)} ${formatTime(session.issuedAt)}`}>
+            Last active {formatRelative(session.issuedAt)}
+          </span>
+          <span aria-hidden>·</span>
+          <span title={`First seen ${formatGB(session.firstSeenAt)}`}>
+            Signed in {formatRelative(session.firstSeenAt)}
+          </span>
+          {session.ip && (
+            <>
+              <span aria-hidden>·</span>
+              <span className="mono">{session.ip}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm btn-danger"
+        disabled={revoking}
+        onClick={onRevoke}
+      >
+        <Icon d={Icons.trash} size={12} /> {revoking ? "Revoking…" : "Revoke"}
+      </button>
+    </li>
   );
 }

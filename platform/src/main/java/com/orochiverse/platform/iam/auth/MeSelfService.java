@@ -116,7 +116,8 @@ public class MeSelfService {
         return ProfileResponse.from(saved);
     }
 
-    public TokenResponse changePassword(String userId, String currentPassword, String newPassword) {
+    public TokenResponse changePassword(String userId, String currentPassword, String newPassword,
+                                        String ip, String userAgent) {
         User existing = loadActiveOrThrow(userId);
 
         if (!passwords.matches(currentPassword, existing.passwordHash())) {
@@ -150,7 +151,7 @@ public class MeSelfService {
         }
 
         String access = issueAccessTokenForUser(saved);
-        var refresh = refreshTokens.issue(userId);
+        var refresh = refreshTokens.issue(userId, userAgent, ip, /*firstSeenAt*/ null);
 
         audit.save(AuditEntry.of(AuditAction.PASSWORD_CHANGED, userId,
                 Map.of("userId", userId, "via", "self_service")));
@@ -161,7 +162,13 @@ public class MeSelfService {
 
     public List<SessionResponse> listSessions(String userId) {
         return refreshTokens.listForUser(userId).stream()
-                .map(s -> new SessionResponse(s.id(), s.issuedAt(), s.expiresAt()))
+                .map(s -> new SessionResponse(
+                        s.id(),
+                        s.issuedAt(),
+                        s.firstSeenAt(),
+                        s.expiresAt(),
+                        s.userAgent(),
+                        s.ip()))
                 .toList();
     }
 
@@ -178,6 +185,29 @@ public class MeSelfService {
                     Map.of("userId", userId, "sessionId", sessionId, "via", "self_service")));
             log.info("session revoked user={} sessionId={}", userId, sessionId);
         }
+    }
+
+    /**
+     * Revoke every session for the caller except the one whose derived id
+     * is {@code keepSessionId} — i.e. "sign out everywhere else". The
+     * caller's tab stays logged in; every other device / tab is forcibly
+     * signed out on its next access-token refresh (within ~15 min). If
+     * {@code keepSessionId} doesn't match any session (the caller's tab
+     * has already rotated past it, or it's malformed) every session gets
+     * revoked, including the caller's — the SPA handles that gracefully
+     * by redirecting to login.
+     *
+     * <p>Returns the number of revoked sessions so the UI can show a
+     * meaningful confirmation toast ("Signed out of 3 other devices").
+     */
+    public int revokeOtherSessions(String userId, String keepSessionId) {
+        int revoked = refreshTokens.revokeAllForUserExcept(userId, keepSessionId);
+        if (revoked > 0) {
+            audit.save(AuditEntry.of(AuditAction.TOKEN_REVOKED, userId,
+                    Map.of("userId", userId, "count", revoked, "via", "sign_out_others")));
+            log.info("other sessions revoked user={} count={}", userId, revoked);
+        }
+        return revoked;
     }
 
     private User loadActiveOrThrow(String userId) {
